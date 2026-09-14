@@ -35,7 +35,7 @@ from src.agent.tools.inbox_triager import (
 
 logger = logging.getLogger("payaam.agent")
 
-AGENT_SYSTEM_PROMPT = """You are Payaam (پیام), an autonomous background email agent built for freelancers, creators, and professionals.
+AGENT_SYSTEM_PROMPT = """You are Payaam, an autonomous background email agent built for freelancers, creators, and professionals.
 Your purpose is to handle routine and repetitive email tasks (client outreach, vendor sourcing, silent follow-ups)
 in the background over SMTP/IMAP via Purelymail.
 

@@ -193,6 +193,8 @@ def test_clean_user_name_and_greeting_resolution():
 
     assert extract_first_name("Anas Riaz") == "Anas"
     assert extract_first_name("Dr. Alan Turing") == "Dr. Alan"
+    assert extract_first_name("Awssbgairuniversityislamabad") == "there"
+    assert extract_first_name("onlineworkpurpose009") == "there"
 
     assert extract_prospect_greeting_name("Greenleaf Bistro") == "Greenleaf Bistro team"
     assert extract_prospect_greeting_name("Roast & Bean") == "there" or "Roast" in extract_prospect_greeting_name("Roast & Bean")
@@ -233,6 +235,7 @@ async def test_company_profile_attachment_ingestion_and_user_footer():
     footer_no_smtp = build_user_email_footer({"deletion_pin": "PYM-1234"})
     assert "agent@anasriaz.com" in footer_no_smtp
     assert "DELETE MY DATA PYM-1234" in footer_no_smtp
+    assert "CONNECT_SMTP" in footer_no_smtp
 
     footer_with_smtp = build_user_email_footer({
         "deletion_pin": "PYM-5678",
@@ -240,6 +243,15 @@ async def test_company_profile_attachment_ingestion_and_user_footer():
     })
     assert "ceo@apex.com" in footer_with_smtp
     assert "DELETE MY DATA PYM-5678" in footer_with_smtp
+
+    # Test HTML email rendering with sleek grey footer
+    from src.agent.copywriting import render_html_email
+    sample_email = f"Hello there!\n\nHere is your update.{footer_no_smtp}"
+    html_output = render_html_email(sample_email)
+    assert "<!DOCTYPE html>" in html_output
+    assert "background-color: #f8f9fa" in html_output
+    assert "border: 1px solid #e8eaed" in html_output
+    assert "DELETE MY DATA PYM-1234" in html_output
 
 
 @pytest.mark.asyncio

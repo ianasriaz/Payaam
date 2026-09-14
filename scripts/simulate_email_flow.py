@@ -26,7 +26,7 @@ logger = logging.getLogger("payaam.simulation")
 
 async def run_simulation():
     print("\n" + "=" * 80)
-    print("🚀 PAYAAM (پیام): END-TO-END AUTONOMOUS EMAIL AGENT SIMULATION")
+    print("🚀 PAYAAM: END-TO-END AUTONOMOUS EMAIL AGENT SIMULATION")
     print("=" * 80 + "\n")
 
     user_email = "anas@anasriaz.com"

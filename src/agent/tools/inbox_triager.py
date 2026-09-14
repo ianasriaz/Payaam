@@ -293,7 +293,7 @@ Copywriting Rules:
         welcome_subject = "👋 Welcome to Payaam - Start Your Autonomous Outreach"
         welcome_body = (
             f"Hello {user_first}!\n\n"
-            "We noticed you'd like to use Payaam (پیام) for your own business! 🚀\n\n"
+            "We noticed you'd like to use Payaam for your own business! 🚀\n\n"
             "I am an autonomous background email delegate designed to handle repetitive cold outreach, "
             "client follow-ups, and lead sourcing silently from your inbox.\n\n"
             "💡 How to Get Started:\n"

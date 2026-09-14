@@ -165,6 +165,26 @@ async def handle_onboarding_or_greeting_tool(input_data: OnboardingInput) -> Onb
                 ),
                 user_profile=saved,
             )
+        else:
+            user = dynamodb_service.get_user(norm_email) or {
+                "email": norm_email,
+                "name": clean_user_name(input_data.user_name, norm_email),
+            }
+            return OnboardingResult(
+                action_type="SMTP_TEMPLATE",
+                response_subject="Connect your personal email (SMTP)",
+                response_body=(
+                    "To send outreach directly from your personal email address, reply with your SMTP credentials:\n\n"
+                    "CONNECT_SMTP\n"
+                    "Host: smtp.gmail.com (or your provider)\n"
+                    "Port: 465\n"
+                    "Username: your_email@domain.com\n"
+                    "Password: your_app_password\n\n"
+                    "Your password will be encrypted at rest using AES-128 Fernet and strictly used for your outreach."
+                    f"{build_user_email_footer(user)}"
+                ),
+                user_profile=user,
+            )
 
     # -------------------------------------------------------------------------
     # 3. Check for Existing User
@@ -260,15 +280,15 @@ async def handle_onboarding_or_greeting_tool(input_data: OnboardingInput) -> Onb
                 "name": clean_user_name(input_data.user_name, norm_email),
             })
 
-        deletion_pin = existing_user.get("deletion_pin", "PYM-XXXX")
         user_first = extract_first_name(existing_user.get("name", "there"))
+        greeting_salutation = f"Hello {user_first}!" if user_first.lower() != "there" else "Hello there!"
 
         return OnboardingResult(
             action_type="GREETING",
             response_subject="👋 Welcome to Payaam — your autonomous email delegate",
             response_body=(
-                f"Hello {user_first}!\n\n"
-                "I am Payaam (پیام), an autonomous AI agent that handles repetitive email outreach, "
+                f"{greeting_salutation}\n\n"
+                "I am Payaam, an autonomous AI delegate that handles repetitive email outreach, "
                 "job pitches, and client follow-ups silently in the background.\n\n"
                 "💡 What I Can Do For You:\n"
                 "1. Multi-Target Outreach: Pitch job applications, competition proposals, or client services with tailored pitches.\n"

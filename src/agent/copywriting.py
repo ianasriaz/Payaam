@@ -30,6 +30,9 @@ def clean_user_name(raw_name: Optional[str] = None, email: Optional[str] = None)
             return sub.capitalize()
         # If it doesn't look like an email or username with punctuation
         if "@" not in name and "_" not in name and len(name.split()) <= 4:
+            # If it's a single concatenated word longer than 14 chars, it's a username/handle
+            if len(name.split()) == 1 and len(name) > 14:
+                return "there"
             # Check if camelcase like AnasRiaz
             if re.match(r"^[A-Z][a-z]+[A-Z][a-z]+$", name):
                 return re.sub(r"([a-z])([A-Z])", r"\1 \2", name)
@@ -42,6 +45,9 @@ def clean_user_name(raw_name: Optional[str] = None, email: Optional[str] = None)
         parts = re.split(r"[._\-+]+", local)
         cleaned_parts = [p.capitalize() for p in parts if p and not p.isdigit() and p.lower() not in ["your", "my", "the", "info", "contact", "agent"]]
         if cleaned_parts:
+            # If parts resulted in a single very long word > 14 chars
+            if len(cleaned_parts) == 1 and len(cleaned_parts[0]) > 14:
+                return "there"
             return " ".join(cleaned_parts)
 
     return "Anas Riaz"
@@ -61,8 +67,8 @@ def extract_first_name(full_name: str) -> str:
     # If the token is 'Youranasriaz', resolve to Anas
     if "anas" in tokens[0].lower():
         return "Anas"
-    # If it contains digits (e.g. onlineworkpurpose009, owp360) or looks like a technical handle
-    if any(c.isdigit() for c in tokens[0]) or "@" in tokens[0] or len(tokens[0]) > 14:
+    # If it contains digits, @, or is a long technical handle > 14 chars
+    if any(c.isdigit() for c in tokens[0]) or "@" in tokens[0] or len(tokens[0]) > 14 or tokens[0].lower() == "there":
         return "there"
     return tokens[0]
 
@@ -248,7 +254,7 @@ def sanitize_email_copy(text: str, user_name: Optional[str] = None) -> str:
 
 
 def build_user_email_footer(user_profile: Optional[Dict[str, Any]] = None) -> str:
-    """Builds a customized, reassuring control footer for user-facing emails."""
+    """Builds a concise, focused control footer for user-facing plain-text emails."""
     profile = user_profile or {}
     pin = profile.get("deletion_pin")
     if not pin and profile.get("email"):
@@ -265,28 +271,119 @@ def build_user_email_footer(user_profile: Optional[Dict[str, Any]] = None) -> st
     custom_addr = smtp_cfg.get("username") if smtp_cfg else None
 
     lines = [
-        "\n\n─────────────────────────────────────────────",
+        "\n\n────────────────────────────────────────────────────────────",
         "⚙️ Payaam User Privacy & Email Controls:",
     ]
     if custom_addr:
         lines.append(
-            f"• Custom Email / BYO-SMTP: Connected! Outreach is sent directly from your personal email ({custom_addr}).\n"
-            f"  You can update your SMTP credentials or disconnect at any time."
+            f"• Custom Email: Connected ({custom_addr}) — reply 'DISCONNECT_SMTP' to reset."
         )
     else:
         lines.append(
-            "• Custom Email / BYO-SMTP: Currently sending via default agent email (agent@anasriaz.com).\n"
-            "  You can connect your own email at any time by replying:\n"
-            "    CONNECT_SMTP\n"
-            "    Host: mail.purelymail.com (or smtp.gmail.com)\n"
-            "    Port: 465 (or 587)\n"
-            "    Username: your_email@domain.com\n"
-            "    Password: your_app_password"
+            "• Custom Email: Sending via default relay (agent@anasriaz.com). Reply with 'CONNECT_SMTP' to connect your own email."
         )
     lines.append(
-        f"• Delete Your Data (Right-to-be-Forgotten): Reply at any time to permanently purge your data:\n"
-        f"    DELETE MY DATA {pin}"
+        f"• Delete Profile & Data: Reply 'DELETE MY DATA {pin}' at any time to permanently purge all data."
     )
-    lines.append("─────────────────────────────────────────────")
+    lines.append("────────────────────────────────────────────────────────────")
     return "\n".join(lines)
+
+
+def render_html_email(body_text: str, user_profile: Optional[Dict[str, Any]] = None) -> str:
+    """Renders an executive, responsive HTML email with a sleek grey footer.
+
+    Matches modern SaaS and Google account notification styling (Screenshot reference).
+    Ensures the privacy and SMTP control box is distinct, elegant, and never mixes
+    with the email body.
+    """
+    import html
+
+    # Separate user control footer from main email body
+    footer_plain = ""
+    main_text = body_text
+
+    divider_match = re.search(r"\n*─{10,}\s*\n([\s\S]*?)─{10,}\s*$", body_text)
+    if divider_match:
+        footer_plain = divider_match.group(1).strip()
+        main_text = body_text[:divider_match.start()].strip()
+    elif "⚙️ Payaam User Privacy & Email Controls" in body_text:
+        idx = body_text.find("⚙️ Payaam User Privacy & Email Controls")
+        footer_plain = body_text[idx:].strip()
+        main_text = body_text[:idx].strip()
+
+    # Format body into clean HTML blocks
+    paragraphs = re.split(r"\n{2,}", main_text)
+    formatted_paras = []
+    for p in paragraphs:
+        lines = p.strip().split("\n")
+        # Check if list of bullet points or numbered items
+        if all(line.strip().startswith(("•", "-", "*", "1.", "2.", "3.", "4.")) for line in lines if line.strip()):
+            items_html = []
+            for line in lines:
+                if not line.strip():
+                    continue
+                clean_item = re.sub(r"^[\s•\-*]+|\s*^\d+\.\s*", "", line.strip())
+                if ":" in clean_item:
+                    k, v = clean_item.split(":", 1)
+                    item_rendered = f"<strong>{html.escape(k)}:</strong> {html.escape(v)}"
+                else:
+                    item_rendered = html.escape(clean_item)
+                item_rendered = re.sub(r"(https?://[^\s<]+)", r'<a href="\1" style="color: #1a73e8; text-decoration: none;">\1</a>', item_rendered)
+                items_html.append(f'<li style="margin-bottom: 6px; line-height: 1.5;">{item_rendered}</li>')
+            formatted_paras.append(f'<ul style="margin: 8px 0 16px 20px; padding: 0; color: #202124; font-size: 14px;">{"".join(items_html)}</ul>')
+        else:
+            escaped_p = html.escape("\n".join(lines))
+            escaped_p = escaped_p.replace("\n", "<br>")
+            escaped_p = re.sub(r"(https?://[^\s<]+)", r'<a href="\1" style="color: #1a73e8; text-decoration: underline;">\1</a>', escaped_p)
+            formatted_paras.append(f'<p style="margin: 0 0 14px 0; line-height: 1.6; color: #202124; font-size: 14px;">{escaped_p}</p>')
+
+    main_html = "\n".join(formatted_paras)
+
+    footer_html = ""
+    if footer_plain:
+        profile = user_profile or {}
+        pin = profile.get("deletion_pin")
+        if not pin:
+            pin_match = re.search(r"DELETE MY DATA\s+([A-Za-z0-9\-]+)", footer_plain)
+            pin = pin_match.group(1) if pin_match else "PYM-XXXX"
+
+        is_connected = "Connected (" in footer_plain
+        custom_email_match = re.search(r"Connected \(([^)]+)\)", footer_plain)
+        custom_addr = custom_email_match.group(1) if custom_email_match else None
+
+        if is_connected and custom_addr:
+            smtp_line = f'• <strong>Custom Email:</strong> Connected (<code>{html.escape(custom_addr)}</code>) &mdash; reply <code style="background-color: #e8eaed; padding: 2px 6px; border-radius: 4px; font-size: 11px;">DISCONNECT_SMTP</code> to reset.'
+        else:
+            smtp_line = '• <strong>Custom Email:</strong> Sending via default relay (<code>agent@anasriaz.com</code>). Reply with <code style="background-color: #e8eaed; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 600;">CONNECT_SMTP</code> to connect your own email.'
+
+        deletion_line = f'• <strong>Delete Profile &amp; Data:</strong> Reply <code style="background-color: #e8eaed; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 600;">DELETE MY DATA {html.escape(pin)}</code> at any time to permanently purge all data.'
+
+        footer_html = f"""
+  <div style="margin-top: 36px; padding: 16px 20px; background-color: #f8f9fa; border: 1px solid #e8eaed; border-radius: 8px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 12px; line-height: 1.6; color: #5f6368;">
+    <div style="font-weight: 600; color: #3c4043; margin-bottom: 8px; display: flex; align-items: center; gap: 6px;">
+      <span>⚙️ Payaam Privacy &amp; Email Controls</span>
+    </div>
+    <div style="margin-bottom: 6px; color: #5f6368;">
+      {smtp_line}
+    </div>
+    <div style="color: #5f6368;">
+      {deletion_line}
+    </div>
+  </div>
+"""
+
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="margin: 0; padding: 24px 16px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #ffffff; color: #202124;">
+  <div style="max-width: 620px; margin: 0 auto;">
+    {main_html}
+    {footer_html}
+  </div>
+</body>
+</html>"""
+
 

@@ -1,8 +1,8 @@
-# 🚀 Payaam (پیام) — Autonomous Background Email Delegate
+# 🚀 Payaam — Autonomous Background Email Delegate
 
 > **Autonomous Client Outreach, Lead Sourcing & Deal Delegation Agent for Solo Professionals**  
 > Built for the **AWS Agents for Humans Hackathon** *(Professional Agents Track)*.  
-> *"Payaam"* (Urdu / Persian: **پیام**) translates to *"The Message"* or *"The Dispatch"* — your tireless digital courier working silently across email networks.
+> *"Payaam"* translates to *"The Message"* or *"The Dispatch"* — your tireless digital courier working silently across email networks.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python: 3.10+](https://img.shields.io/badge/Python-3.10%2B-brightgreen.svg)](https://python.org)

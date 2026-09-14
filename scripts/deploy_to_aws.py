@@ -332,7 +332,7 @@ def launch_ec2_instance(sg_id: str, user_data: str) -> None:
     public_ip = info.get("PublicIpAddress")
 
     print("\n" + "=" * 65)
-    print("🎉 PAYAAM (پیام) IS OFFICIALLY HOSTED & RUNNING ON AWS!")
+    print("🎉 PAYAAM IS OFFICIALLY HOSTED & RUNNING ON AWS!")
     print("=" * 65)
     print(f"• AWS Region:       {AWS_REGION}")
     print(f"• Instance ID:      {inst_id}")

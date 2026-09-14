@@ -1,4 +1,4 @@
-# 🏆 Payaam (پیام) — AWS Hackathon Submission Kit
+# 🏆 Payaam — AWS Hackathon Submission Kit
 
 Use this document to copy-paste directly into your Devpost / Hackathon project submission!
 
@@ -6,10 +6,10 @@ Use this document to copy-paste directly into your Devpost / Hackathon project s
 
 ## Project Overview
 
-- **Project Title:** Payaam (پیام) — Autonomous Background Email Delegate for Freelancers & Solo Professionals
+- **Project Title:** Payaam — Autonomous Background Email Delegate for Freelancers & Solo Professionals
 - **Target Track:** **Professional Agents Track** *(Secondary: Everyday Agents Track)*
 - **Tagline:** An autonomous background email delegate built with the Strands Agents SDK and Amazon Bedrock that clears the runway for solo professionals by handling repetitive cold outreach, client nurturing, and deal follow-ups silently over native email.
-- **Etymology:** *"Payaam"* (Urdu / Persian: **پیام**) translates to *"The Message"* or *"The Dispatch"* — an agent designed to be your tireless digital ambassador across email networks.
+- **Etymology:** *"Payaam"* translates to *"The Message"* or *"The Dispatch"* — an agent designed to be your tireless digital ambassador across email networks.
 
 ---
 

@@ -14,7 +14,7 @@ import uvicorn
 
 def main():
     print("\n" + "=" * 65)
-    print(" 🚀 Launching Payaam (پیام) Interactive Visual Sandbox")
+    print(" 🚀 Launching Payaam Interactive Visual Sandbox")
     print(" AWS Agents for Humans Hackathon - Professional Agents Track")
     print("=" * 65)
     print("\n📱 Access Sandbox UI at: http://localhost:8000")

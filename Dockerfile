@@ -1,4 +1,4 @@
-# Payaam (پیام) - Container Runtime for AWS AgentCore / ECS / Fargate
+# Payaam - Container Runtime for AWS AgentCore / ECS / Fargate
 FROM python:3.11-slim
 
 # Set environment variables

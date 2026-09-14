@@ -43,7 +43,7 @@ async def serve_ui():
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Payaam (پیام) - Autonomous Background Email Agent</title>
+    <title>Payaam - Autonomous Background Email Agent</title>
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0a0a0a; color: #ededed; margin: 0; padding: 2rem; }
         .container { max-width: 900px; margin: 0 auto; }
@@ -59,7 +59,7 @@ async def serve_ui():
 </head>
 <body>
     <div class="container">
-        <h1>Payaam (پیام): Autonomous Email Agent</h1>
+        <h1>Payaam: Autonomous Email Agent</h1>
         <p class="subtitle">Powered by Strands Agents SDK & Amazon Bedrock (Purelymail SMTP/IMAP)</p>
         <div class="card">
             <h3>Simulate Inbound Email</h3>

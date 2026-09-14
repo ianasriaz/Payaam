@@ -108,8 +108,15 @@ class EmailService:
             msg["In-Reply-To"] = in_reply_to
             msg["References"] = in_reply_to
 
-        # Attach text and optional HTML parts
+        # Attach text and sleek HTML parts
         msg.attach(MIMEText(body_text, "plain", "utf-8"))
+        if not body_html and body_text:
+            try:
+                from src.agent.copywriting import render_html_email
+                body_html = render_html_email(body_text)
+            except Exception as exc:
+                logger.warning(f"Could not render HTML body: {exc}")
+
         if body_html:
             msg.attach(MIMEText(body_html, "html", "utf-8"))
 
