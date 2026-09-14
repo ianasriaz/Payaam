@@ -16,6 +16,7 @@ from src.agent.copywriting import (
     build_user_email_footer,
     clean_user_name,
     extract_first_name,
+    extract_active_reply_text,
 )
 from src.services.bedrock import bedrock_service
 from src.services.crypto import encrypt_secret
@@ -47,81 +48,14 @@ async def handle_onboarding_or_greeting_tool(input_data: OnboardingInput) -> Onb
     """
     body = input_data.email_body.strip()
     subj = input_data.email_subject.strip()
-    full_text = f"{subj}\n{body}".strip()
+    # CRITICAL: Extract only the active unquoted user text so quoted thread history
+    # (e.g. footers mentioning deletion PINs) never triggers destructive actions!
+    active_body = extract_active_reply_text(body)
+    full_text = f"{subj}\n{active_body}".strip()
     norm_email = input_data.user_email.strip().lower()
 
     # -------------------------------------------------------------------------
-    # 1. Check for Data Deletion Command ("DELETE MY DATA [PIN]")
-    # -------------------------------------------------------------------------
-    delete_with_pin = re.search(
-        r"DELETE\s+(?:MY\s+)?(?:DATA|PROFILE|ACCOUNT)\s+(?:PIN:?\s*)?((?:PYM|WD)-[A-Za-z0-9]+)\b",
-        full_text,
-        re.IGNORECASE,
-    )
-    if not delete_with_pin:
-        pin_cand = re.search(
-            r"DELETE\s+(?:MY\s+)?(?:DATA|PROFILE|ACCOUNT)\s+(?:PIN:?\s*)?([A-Za-z0-9]{4,10})\b",
-            full_text,
-            re.IGNORECASE,
-        )
-        if pin_cand and pin_cand.group(1).upper() not in ["DATA", "PROFILE", "ACCOUNT", "DELETE"]:
-            delete_with_pin = pin_cand
-
-    delete_without_pin = re.search(
-        r"\bDELETE\s+(?:MY\s+)?(?:DATA|PROFILE|ACCOUNT)\b",
-        full_text,
-        re.IGNORECASE,
-    )
-
-    if delete_with_pin or delete_without_pin:
-        provided_pin = delete_with_pin.group(1).strip() if delete_with_pin else None
-        if not provided_pin:
-            # User asked to delete but didn't provide PIN -> send verification reminder
-            user = dynamodb_service.get_user(norm_email)
-            if user:
-                pin = user.get("deletion_pin", "UNKNOWN")
-                return OnboardingResult(
-                    action_type="DELETION_CONFIRMATION_REQUIRED",
-                    response_subject="⚠️ Action required: Confirm permanent data deletion",
-                    response_body=(
-                        f"Hello {user.get('name', 'there')},\n\n"
-                        "You requested to permanently delete your Payaam profile, credentials, and mission history.\n\n"
-                        "To protect against unauthorized requests, please confirm by replying:\n"
-                        f"  DELETE MY DATA {pin}\n\n"
-                        "Once received, all your data will be permanently purged immediately."
-                        f"{build_user_email_footer(user)}"
-                    ),
-                )
-            return OnboardingResult(
-                action_type="DATA_DELETED",
-                response_subject="Payaam: No Profile Found",
-                response_body="No profile exists under this email address.",
-            )
-
-        # Process actual purge with PIN
-        purge_result = dynamodb_service.delete_user_and_all_data(norm_email, provided_pin)
-        if purge_result.get("success"):
-            return OnboardingResult(
-                action_type="DATA_DELETED",
-                response_subject="Data permanently deleted (Right-to-be-Forgotten)",
-                response_body=(
-                    f"Hello,\n\n"
-                    f"All your data under {norm_email} has been permanently purged from Payaam:\n"
-                    f"• User Profile & Memory Vault: DELETED\n"
-                    f"• Connected SMTP Credentials: PURGED\n"
-                    f"• Ephemeral Mission Sessions ({purge_result.get('deleted_missions_count', 0)} items): DELETED\n\n"
-                    f"We retain zero records of your identity or messages. Thank you for using Payaam!"
-                ),
-            )
-        else:
-            return OnboardingResult(
-                action_type="DELETION_FAILED",
-                response_subject="❌ Deletion Failed: Invalid PIN",
-                response_body=f"Failed to delete profile: {purge_result.get('error')}. Please verify your PIN and try again.",
-            )
-
-    # -------------------------------------------------------------------------
-    # 2. Check for BYO-SMTP Connection Command ("CONNECT_SMTP")
+    # 1. Check for BYO-SMTP Connection Command ("CONNECT_SMTP")
     # -------------------------------------------------------------------------
     if "CONNECT_SMTP" in full_text.upper():
         host_match = re.search(r"Host:\s*([^\r\n]+)", full_text, re.IGNORECASE)
@@ -184,6 +118,83 @@ async def handle_onboarding_or_greeting_tool(input_data: OnboardingInput) -> Onb
                     f"{build_user_email_footer(user)}"
                 ),
                 user_profile=user,
+            )
+
+    # -------------------------------------------------------------------------
+    # 2. Check for Data Deletion Command ("DELETE MY DATA [PIN]")
+    # -------------------------------------------------------------------------
+    # Must be an explicit active command on its own line or unquoted text
+    delete_with_pin = re.search(
+        r"(?im)^\s*DELETE\s+(?:MY\s+)?(?:DATA|PROFILE|ACCOUNT)\s+(?:PIN:?\s*)?((?:PYM|WD)-[A-Za-z0-9]+)\b",
+        full_text,
+    )
+    if not delete_with_pin:
+        # Fallback to search if full_text is short and predominantly a delete command
+        if len(full_text.splitlines()) <= 4:
+            pin_cand = re.search(
+                r"DELETE\s+(?:MY\s+)?(?:DATA|PROFILE|ACCOUNT)\s+(?:PIN:?\s*)?([A-Za-z0-9\-]{4,12})\b",
+                full_text,
+                re.IGNORECASE,
+            )
+            if pin_cand and pin_cand.group(1).upper() not in ["DATA", "PROFILE", "ACCOUNT", "DELETE"]:
+                delete_with_pin = pin_cand
+
+    delete_without_pin = re.search(
+        r"(?im)^\s*DELETE\s+(?:MY\s+)?(?:DATA|PROFILE|ACCOUNT)\b",
+        full_text,
+    )
+    if not delete_without_pin and len(full_text.splitlines()) <= 4:
+        delete_without_pin = re.search(
+            r"\bDELETE\s+(?:MY\s+)?(?:DATA|PROFILE|ACCOUNT)\b",
+            full_text,
+            re.IGNORECASE,
+        )
+
+    if delete_with_pin or delete_without_pin:
+        provided_pin = delete_with_pin.group(1).strip() if delete_with_pin else None
+        if not provided_pin:
+            # User asked to delete but didn't provide PIN -> send verification reminder
+            user = dynamodb_service.get_user(norm_email)
+            if user:
+                pin = user.get("deletion_pin", "UNKNOWN")
+                return OnboardingResult(
+                    action_type="DELETION_CONFIRMATION_REQUIRED",
+                    response_subject="⚠️ Action required: Confirm permanent data deletion",
+                    response_body=(
+                        f"Hello {user.get('name', 'there')},\n\n"
+                        "You requested to permanently delete your Payaam profile, credentials, and mission history.\n\n"
+                        "To protect against unauthorized requests, please confirm by replying:\n"
+                        f"  DELETE MY DATA {pin}\n\n"
+                        "Once received, all your data will be permanently purged immediately."
+                        f"{build_user_email_footer(user)}"
+                    ),
+                )
+            return OnboardingResult(
+                action_type="DATA_DELETED",
+                response_subject="Payaam: No Profile Found",
+                response_body="No profile exists under this email address.",
+            )
+
+        # Process actual purge with PIN
+        purge_result = dynamodb_service.delete_user_and_all_data(norm_email, provided_pin)
+        if purge_result.get("success"):
+            return OnboardingResult(
+                action_type="DATA_DELETED",
+                response_subject="Data permanently deleted (Right-to-be-Forgotten)",
+                response_body=(
+                    f"Hello,\n\n"
+                    f"All your data under {norm_email} has been permanently purged from Payaam:\n"
+                    f"• User Profile & Memory Vault: DELETED\n"
+                    f"• Connected SMTP Credentials: PURGED\n"
+                    f"• Ephemeral Mission Sessions ({purge_result.get('deleted_missions_count', 0)} items): DELETED\n\n"
+                    f"We retain zero records of your identity or messages. Thank you for using Payaam!"
+                ),
+            )
+        else:
+            return OnboardingResult(
+                action_type="DELETION_FAILED",
+                response_subject="❌ Deletion Failed: Invalid PIN",
+                response_body=f"Failed to delete profile: {purge_result.get('error')}. Please verify your PIN and try again.",
             )
 
     # -------------------------------------------------------------------------

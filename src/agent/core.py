@@ -18,6 +18,7 @@ from src.agent.copywriting import (
     build_user_email_footer,
     clean_user_name,
     extract_first_name,
+    extract_active_reply_text,
     resolve_lead_display_name,
 )
 from src.agent.tools.onboarding import (
@@ -105,14 +106,15 @@ class PayaamAgent:
         # ---------------------------------------------------------------------
         # Step 1: Universal Admin Commands (Right-to-be-Forgotten or BYO-SMTP)
         # ---------------------------------------------------------------------
-        body_upper = body.upper()
-        if "DELETE MY DATA" in body_upper or "CONNECT_SMTP" in body_upper:
+        active_body = extract_active_reply_text(body)
+        active_upper = f"{subject}\n{active_body}".upper()
+        if "DELETE" in active_upper or "CONNECT_SMTP" in active_upper:
             onboarding_res = await handle_onboarding_or_greeting_tool(
                 OnboardingInput(
                     user_email=sender,
                     user_name=email_data.from_name,
                     email_subject=subject,
-                    email_body=body,
+                    email_body=active_body,
                     attachments=email_data.attachments,
                 )
             )

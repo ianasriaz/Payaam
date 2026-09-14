@@ -73,6 +73,41 @@ def extract_first_name(full_name: str) -> str:
     return tokens[0]
 
 
+def extract_active_reply_text(body: str) -> str:
+    """Extracts only the sender's active typed response, stripping quoted email history.
+
+    Prevents quoted message footers (like previous deletion PINs or instructions)
+    from being misconstrued as active user commands.
+    """
+    if not body:
+        return ""
+
+    # Common email client quote header patterns
+    quote_patterns = [
+        r"(?im)^\s*On\s+.*,\s+.*wrote:\s*$",
+        r"(?im)^\s*On\s+.*\d{4}.*wrote:\s*$",
+        r"(?im)^\s*On\s+.*<[^>]+>\s*wrote:\s*$",
+        r"(?im)^\s*-{2,}\s*Original Message\s*-{2,}",
+        r"(?im)^\s*_{10,}\s*$",
+        r"(?im)^\s*From:\s*.*(?:\r?\n\s*Sent:|\r?\n\s*To:|\r?\n\s*Subject:)",
+    ]
+
+    text = body
+    for pat in quote_patterns:
+        m = re.search(pat, text)
+        if m:
+            text = text[:m.start()]
+
+    # Strip quoted lines starting with '>'
+    clean_lines = []
+    for line in text.splitlines():
+        if line.strip().startswith(">"):
+            continue
+        clean_lines.append(line)
+
+    return "\n".join(clean_lines).strip()
+
+
 def resolve_lead_display_name(
     lead_name: Optional[str] = None,
     lead_email: Optional[str] = None,

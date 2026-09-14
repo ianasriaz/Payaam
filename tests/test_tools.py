@@ -68,6 +68,37 @@ async def test_onboarding_data_deletion_with_pin():
     assert dynamodb_service.get_user(email) is None
 
 
+@pytest.mark.asyncio
+async def test_onboarding_connect_smtp_with_quoted_deletion_pin_does_not_delete():
+    email = "smtp_tester@example.com"
+    user = dynamodb_service.save_user({"email": email, "name": "SMTP Tester"})
+    pin = user["deletion_pin"]
+
+    # Simulates Gmail reply quoting the previous welcome email with the deletion PIN
+    gmail_reply_body = f"""CONNECT_SMTP
+
+On Mon, Sep 14, 2026, 8:36 PM Payaam <agent@anasriaz.com> wrote:
+Hello there!
+I am Payaam, an autonomous AI delegate...
+• Delete Profile & Data: Reply 'DELETE MY DATA {pin}' at any time to permanently purge all data.
+"""
+
+    res = await handle_onboarding_or_greeting_tool(
+        OnboardingInput(
+            user_email=email,
+            email_subject="Re: 👋 Welcome to Payaam — your autonomous email delegate",
+            email_body=gmail_reply_body,
+        )
+    )
+
+    # Must NOT delete the user!
+    assert res.action_type == "SMTP_TEMPLATE"
+    assert "Host:" in res.response_body
+    assert "Username:" in res.response_body
+    # User must still exist in database!
+    assert dynamodb_service.get_user(email) is not None
+
+
 
 def test_extract_leads_from_text():
     text = """Please outreach these prospects:
