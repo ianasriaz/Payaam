@@ -216,26 +216,33 @@ Write a helpful, direct response to this user. Do NOT include the privacy footer
         # Step 2: Check If Correlated with an Active Mission (Two-Knock Policy)
         # ---------------------------------------------------------------------
         active_body = extract_active_reply_text(body)
+        is_reply = bool(
+            thread_ref
+            or subject.strip().lower().startswith("re:")
+            or bool(email_data.in_reply_to)
+            or bool(email_data.references)
+        )
 
-        # 2a. Check if sender is an active prospect/lead in an ongoing mission
         correlated_mission = None
         is_lead_reply = False
 
-        lead_mission = dynamodb_service.find_mission_by_thread(thread_ref or "", sender_email=sender)
-        if lead_mission:
-            # Verify if sender is one of the leads on this mission
-            if any(l.get("email", "").strip().lower() == sender_clean for l in lead_mission.get("leads", [])):
-                correlated_mission = lead_mission
-                is_lead_reply = True
+        if is_reply:
+            # 2a. Check if sender is an active prospect/lead in an ongoing mission
+            lead_mission = dynamodb_service.find_mission_by_thread(thread_ref or "", sender_email=sender)
+            if lead_mission:
+                # Verify if sender is one of the leads on this mission
+                if any(l.get("email", "").strip().lower() == sender_clean for l in lead_mission.get("leads", [])):
+                    correlated_mission = lead_mission
+                    is_lead_reply = True
 
-        # 2b. If not a lead, check if mission owner is replying to an Action Card
-        if not correlated_mission and thread_ref:
-            user_mission = dynamodb_service.find_mission_by_thread(thread_ref)
-            if user_mission and user_mission.get("user_email", "").strip().lower() == sender_clean:
-                from src.agent.tools.outreach import _extract_leads_from_text
-                new_leads_in_reply = _extract_leads_from_text(active_body)
-                if not new_leads_in_reply:
-                    correlated_mission = user_mission
+            # 2b. If not a lead, check if mission owner is replying to an Action Card
+            if not correlated_mission and thread_ref:
+                user_mission = dynamodb_service.find_mission_by_thread(thread_ref)
+                if user_mission and user_mission.get("user_email", "").strip().lower() == sender_clean:
+                    from src.agent.tools.outreach import _extract_leads_from_text
+                    new_leads_in_reply = _extract_leads_from_text(active_body)
+                    if not new_leads_in_reply:
+                        correlated_mission = user_mission
 
         if correlated_mission:
             self.logger.info(f"Correlated email with active mission {correlated_mission.get('mission_id')} (is_lead={is_lead_reply})")
