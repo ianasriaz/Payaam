@@ -213,14 +213,20 @@ async def handle_onboarding_or_greeting_tool(input_data: OnboardingInput) -> Onb
             if ext in ["pdf", "txt", "md", "doc", "docx", "csv", "html"]:
                 doc_attachments.append((att, ext, fn))
 
-    has_profile_keywords = any(kw in full_text.lower() for kw in [
-        "portfolio", "rate", "services", "setup: my profile", "setup",
-        "pricing", "developer", "designer", "freelance", "company", "profile",
-        "packages", "faq", "faqs", "address", "office", "agency"
-    ]) or bool(doc_attachments)
+    explicit_profile_patterns = [
+        r"\bsetup:\s*(?:my\s*)?profile\b",
+        r"\b(?:my|our)\s+(?:company\s+)?profile\b",
+        r"\b(?:my|our)\s+(?:portfolio|rates|services|packages|pricing)\s*:",
+        r"\bhere\s+is\s+(?:my|our)\s+(?:company\s+|business\s+)?(?:profile|overview|services|portfolio|rates)\b",
+        r"\babout\s+(?:us|our\s+company|my\s+business)\s*:",
+        r"\bcompany\s+overview\b",
+        r"\bprofile\s+setup\b",
+        r"\bportfolio\s*:\s*https?://",
+    ]
+    has_profile_submission = any(re.search(pat, full_text, re.IGNORECASE) for pat in explicit_profile_patterns) or bool(doc_attachments)
     has_target_leads = bool(re.findall(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", body.replace(norm_email, "")))
 
-    if has_profile_keywords and not has_target_leads:
+    if has_profile_submission and not has_target_leads:
         portfolio_match = re.search(r"(?:https?://[^\s]+|[a-zA-Z0-9\-]+\.[a-zA-Z]{2,}(?:/[^\s]*)?)", body)
         portfolio = portfolio_match.group(0).rstrip(".,;:)>]") if portfolio_match else ""
 
@@ -240,7 +246,7 @@ async def handle_onboarding_or_greeting_tool(input_data: OnboardingInput) -> Onb
 
         user_data = dict(existing_user or {})
         existing_profile = user_data.get("company_profile", "")
-        new_profile = (extracted_doc_text + "\n\n" + (body if has_profile_keywords else "")).strip() or existing_profile
+        new_profile = (extracted_doc_text + "\n\n" + (body if has_profile_submission else "")).strip() or existing_profile
 
         user_data.update({
             "email": norm_email,
@@ -281,9 +287,18 @@ async def handle_onboarding_or_greeting_tool(input_data: OnboardingInput) -> Onb
         r"who\s+are\s+you",
         r"how\s+(?:does\s+this|to)\s+work",
     ]
+    clean_body = (body or "").strip()
+    is_short_text = len(clean_body) <= 80
     matches_greeting = any(re.search(pat, full_text, re.IGNORECASE) for pat in greeting_patterns)
 
-    if (matches_greeting and not has_target_leads) or not body:
+    # True blank greeting: empty body, or short greeting/query under 80 chars
+    is_pure_greeting = (
+        not clean_body
+        or (is_short_text and matches_greeting and not has_target_leads)
+        or (input_data.email_subject.strip().lower() in ["hi", "hello", "hey", "help", "start", "greetings"] and is_short_text)
+    )
+
+    if is_pure_greeting and not has_target_leads:
         # Create minimal user record to generate their unique Deletion PIN
         if not existing_user:
             existing_user = dynamodb_service.save_user({
@@ -300,19 +315,16 @@ async def handle_onboarding_or_greeting_tool(input_data: OnboardingInput) -> Onb
             response_body=(
                 f"{greeting_salutation}\n\n"
                 "I am Payaam, an autonomous AI delegate that handles repetitive email outreach, "
-                "job pitches, and client follow-ups silently in the background.\n\n"
+                "client proposals, vendor sourcing, and follow-ups silently in the background.\n\n"
                 "💡 What I Can Do For You:\n"
-                "1. Multi-Target Outreach: Pitch job applications, competition proposals, or client services with tailored pitches.\n"
-                "2. Everyday Sourcing: Email suppliers, vendors, or venues to collect quotes & compare.\n"
-                "3. Silent Follow-ups: Chase busy leads automatically without bothering you.\n"
-                "4. 'Two-Knock' Privacy: I run silently and only email you when a real decision is needed!\n\n"
-                "📋 What I Need From You to Get Started:\n"
-                "Simply reply with your profile notes:\n"
-                "• Your Name & Services (e.g., 'Anas, Full-Stack & AI Engineer')\n"
-                "• Portfolio Link (e.g., 'https://anasriaz.com')\n"
-                "• Pricing Baseline / Guardrails (e.g., '$200 - $500, min $150')\n"
-                "• (Or attach your company profile PDF / brochure and Payaam will index it automatically!)\n"
-                "• (Or just give me a task directly: a list of emails and what to pitch!)"
+                "1. Multi-Target Outreach: Deliver tailored B2B pitches citing your actual services and portfolio.\n"
+                "2. Everyday Sourcing: Email suppliers, vendors, or venues to collect and compare quotes.\n"
+                "3. Silent Follow-ups: Chase busy leads automatically without bothering your inbox.\n"
+                "4. 'Two-Knock' Privacy: I answer routine questions silently from your vault, and only email you when a real decision or meeting is ready.\n\n"
+                "📋 Quick Ways to Get Started (Choose Any):\n"
+                "• Save Company Profile: Reply with your company name, services, and rates — or attach your brochure/profile PDF and I'll index it automatically!\n"
+                "• Launch Outreach Directly: Email me your goal and target emails (e.g., 'Pitch these 3 leads about our design services: a@corp.com, b@corp.com').\n"
+                "• Connect Your Email: Reply 'CONNECT_SMTP' at any time to dispatch emails directly from your own custom domain."
                 f"{build_user_email_footer(existing_user)}"
             ),
             user_profile=existing_user,

@@ -88,6 +88,78 @@ class PayaamAgent:
             system_prompt=AGENT_SYSTEM_PROMPT,
         )
 
+    async def plan_or_advise_user(
+        self,
+        sender: str,
+        sender_name: Optional[str],
+        subject: str,
+        body: str,
+        attachments: Any = None,
+    ) -> Dict[str, str]:
+        """Uses Amazon Bedrock (Claude 3.5 Sonnet) to intelligently comprehend the user's inquiry,
+        provide custom pitch strategy/drafting, and guide them on how to dispatch.
+        """
+        user_profile = dynamodb_service.get_user(sender) or {}
+        clean_name = clean_user_name(sender_name or user_profile.get("name"), sender)
+        user_first = extract_first_name(clean_name)
+        salutation = f"Hello {user_first}!" if user_first.lower() != "there" else "Hello there!"
+        footer = build_user_email_footer(user_profile)
+
+        system_prompt = (
+            "You are Payaam, an autonomous AI email delegate for solo operators, agencies, and businesses. "
+            "A user has emailed you instructions, questions, or an outreach goal, but hasn't provided specific recipient email addresses yet.\n"
+            "Your job is to act as an executive, highly competent AI Chief of Staff:\n"
+            "1. Acknowledge and understand their specific business, question, or outreach goal.\n"
+            "2. If they described a service or wanting to pitch clients/partners:\n"
+            "   - Provide a concise, punchy, tailored 3-sentence pitch draft specifically crafted for their business.\n"
+            "   - Give them one crystal-clear next step: 'To dispatch this, simply reply with your list of recipient emails (e.g. contact@company.com, info@biz.com), and I will take over silently in your background!'\n"
+            "3. If they asked a general question (e.g. capabilities, SMTP setup, or how Payaam works):\n"
+            "   - Answer directly and warmly in 2-3 short, clear paragraphs.\n"
+            "4. NEVER dump generic freelancer templates, and never mention unrelated personal links.\n"
+            "5. Tone: Confident, respectful, human, and executive."
+        )
+
+        prompt = f"""User Email: {sender}
+User Name: {clean_name}
+Subject: {subject}
+Message:
+{body}
+
+Write a helpful, direct response to this user. Do NOT include the privacy footer (it will be appended automatically)."""
+
+        try:
+            from src.services.bedrock import bedrock_service
+            raw_response = await bedrock_service.converse(
+                prompt=prompt,
+                system_prompt=system_prompt,
+                temperature=0.3,
+            )
+            from src.agent.copywriting import sanitize_email_copy, sanitize_subject_line
+            body_cleaned = sanitize_email_copy(raw_response, user_name=clean_name)
+
+            reply_subj = subject if subject.lower().startswith("re:") else f"Re: {subject}"
+            if not reply_subj or reply_subj.strip().lower() in ["re:", "re: help", "re: query"]:
+                reply_subj = "📋 Your Payaam Outreach Plan & Next Steps"
+
+            return {
+                "subject": sanitize_subject_line(reply_subj),
+                "body": f"{body_cleaned}\n{footer}",
+            }
+        except Exception as exc:
+            self.logger.warning(f"Bedrock planning fallback ({exc})")
+            return {
+                "subject": f"Re: {subject}",
+                "body": (
+                    f"{salutation}\n\n"
+                    "I received your instructions! I'm ready to handle this outreach for you.\n\n"
+                    "💡 To launch this mission:\n"
+                    "Simply reply to this email with the recipient email addresses you would like me to contact "
+                    "(e.g. 'contact@company.com, info@agency.com').\n\n"
+                    "Once you provide the targets, I will generate bespoke pitches and manage the outreach silently in your background!"
+                    f"{footer}"
+                ),
+            }
+
     async def process_inbound_email(self, email_data: InboundEmail) -> Dict[str, Any]:
         """Main entrypoint for processing any incoming email from IMAP.
 
@@ -226,51 +298,78 @@ class PayaamAgent:
             }
 
         # ---------------------------------------------------------------------
-        # Step 4: Treat as a New Mission Request
+        # Step 4: Check if Target Leads Are Provided for Active Mission
         # ---------------------------------------------------------------------
-        self.logger.info(f"Dispatching new mission for user {sender}")
-        dispatch_res = await dispatch_outreach_mission_tool(
-            MissionDispatchInput(
-                user_email=sender,
-                raw_instructions=body,
+        from src.agent.tools.outreach import _extract_leads_from_text
+        candidate_leads = _extract_leads_from_text(body)
+
+        if candidate_leads:
+            self.logger.info(f"Dispatching new mission for user {sender} ({len(candidate_leads)} leads)")
+            dispatch_res = await dispatch_outreach_mission_tool(
+                MissionDispatchInput(
+                    user_email=sender,
+                    raw_instructions=body,
+                    target_leads=candidate_leads,
+                )
             )
+
+            user_name = clean_user_name(email_data.from_name, sender)
+            user_first = extract_first_name(user_name)
+            salutation = f"Hey {user_first}," if user_first.lower() != "there" else "Hello there,"
+            user_profile = dynamodb_service.get_user(sender) or {"name": user_name, "email": sender}
+            footer = build_user_email_footer(user_profile)
+
+            if dispatch_res.dispatched_count == 1 and dispatch_res.dispatched_leads:
+                lead_disp = resolve_lead_display_name(None, dispatch_res.dispatched_leads[0])
+                receipt_subject = f"🚀 Outreach launched to {lead_disp}"
+            elif dispatch_res.dispatched_count > 0:
+                receipt_subject = f"🚀 Outreach launched ({dispatch_res.dispatched_count} prospects)"
+            else:
+                receipt_subject = "🚀 Outreach mission processed"
+
+            email_service.send_email(
+                to_email=sender,
+                subject=receipt_subject,
+                body_text=(
+                    f"{salutation}\n\n"
+                    f"{dispatch_res.summary_message}\n\n"
+                    f"Payaam is now managing this outreach silently in the background. "
+                    f"I will handle auto-responders, follow-ups, and routine questions automatically, "
+                    f"and will only surface to your inbox when a decision or confirmed meeting is ready!\n\n"
+                    f"Mission ID: {dispatch_res.mission_id}"
+                    f"{footer}"
+                ),
+                in_reply_to=email_data.message_id,
+            )
+
+            return {
+                "route": "NEW_MISSION_DISPATCHED",
+                "mission_id": dispatch_res.mission_id,
+                "dispatched_count": dispatch_res.dispatched_count,
+                "collisions": len(dispatch_res.collisions_detected),
+            }
+
+        # ---------------------------------------------------------------------
+        # Step 5: Intelligent Assistant / Mission Planner (No Leads Provided)
+        # ---------------------------------------------------------------------
+        self.logger.info(f"Providing intelligent advisory response for user {sender}")
+        advisory_res = await self.plan_or_advise_user(
+            sender=sender,
+            sender_name=email_data.from_name,
+            subject=subject,
+            body=body,
+            attachments=email_data.attachments,
         )
-
-        # Send launch receipt back to the user
-        user_name = clean_user_name(email_data.from_name, sender)
-        user_first = extract_first_name(user_name)
-        user_profile = dynamodb_service.get_user(sender) or {"name": user_name, "email": sender}
-        footer = build_user_email_footer(user_profile)
-
-        # Format clean, engaging subject
-        if dispatch_res.dispatched_count == 1 and dispatch_res.dispatched_leads:
-            lead_disp = resolve_lead_display_name(None, dispatch_res.dispatched_leads[0])
-            receipt_subject = f"🚀 Outreach launched to {lead_disp}"
-        elif dispatch_res.dispatched_count > 0:
-            receipt_subject = f"🚀 Outreach launched ({dispatch_res.dispatched_count} prospects)"
-        else:
-            receipt_subject = "🚀 Outreach mission processed"
-
         email_service.send_email(
             to_email=sender,
-            subject=receipt_subject,
-            body_text=(
-                f"Hey {user_first},\n\n"
-                f"{dispatch_res.summary_message}\n\n"
-                f"Payaam is now managing this outreach silently in the background. "
-                f"I will handle auto-responders, follow-ups, and routine questions automatically, "
-                f"and will only surface to your inbox when a decision or confirmed meeting is ready!\n\n"
-                f"Mission ID: {dispatch_res.mission_id}"
-                f"{footer}"
-            ),
+            subject=advisory_res["subject"],
+            body_text=advisory_res["body"],
             in_reply_to=email_data.message_id,
         )
-
         return {
-            "route": "NEW_MISSION_DISPATCHED",
-            "mission_id": dispatch_res.mission_id,
-            "dispatched_count": dispatch_res.dispatched_count,
-            "collisions": len(dispatch_res.collisions_detected),
+            "route": "ADVISORY_RESPONSE",
+            "action": "PLANNING_OR_INQUIRY",
+            "response_sent": True,
         }
 
 

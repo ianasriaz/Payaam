@@ -54,7 +54,7 @@ async def _classify_lead_reply(
     """Uses Bedrock Claude 3.5 Haiku to classify intent and draft an authentic human reply using the Company Knowledge Base."""
     user_name = clean_user_name(user_vault.get("name"))
     user_first = extract_first_name(user_name)
-    portfolio = user_vault.get("portfolio", "https://anasriaz.com")
+    portfolio = user_vault.get("portfolio", "") or "Available upon request"
     company_kb = user_vault.get("company_profile") or user_vault.get("bio_notes", "")
     addressee = prospect_name or "there"
 
@@ -318,9 +318,11 @@ Copywriting Rules:
 
     # 3. Silent Vault Resolution (Answers routine inquiries directly from Company KB)
     if cat == "RESOLVE_SILENTLY":
+        port_str = user_profile.get("portfolio")
+        port_ref = f"Here are details and samples of our recent work: {port_str}.\n\n" if port_str else "I would be happy to share relevant project samples and case studies.\n\n"
         raw_vault_reply = classification.get("suggested_reply") or (
             f"Hi {prospect_greeting},\n\n"
-            f"Here are details and samples of our recent work: {user_profile.get('portfolio', 'https://anasriaz.com')}.\n\n"
+            f"{port_ref}"
             f"Would you be open to a quick 5-minute screen share to see how this works for your business?\n\n"
             f"Best,\n{user_first_name}"
         )

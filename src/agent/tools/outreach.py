@@ -129,7 +129,7 @@ async def _generate_pitch_copy(
     prompt = f"""You are drafting a concise, highly personalized outreach email for {clean_sender}.
 Target Recipient: {target_name} ({target_email})
 Sender Name: {clean_sender}
-Sender Portfolio / Work: {user_portfolio or 'https://anasriaz.com'}
+Sender Portfolio / Work: {user_portfolio or 'Available upon request'}
 Mission Intent & Instructions: {instructions}
 
 Personalization & Intent Rules:
@@ -183,7 +183,8 @@ Return JSON in this format:
 
     # High-quality dynamic fallback template
     instr_lower = instructions.lower()
-    port = user_portfolio or "https://anasriaz.com"
+    port = user_portfolio or ""
+    port_text = f" (portfolio & projects at {port})" if port else ""
     clean_org = target_name.split("(")[0].strip()
 
     if any(w in instr_lower for w in ["job", "role", "hire", "hiring", "position", "engineer", "developer", "resume", "apply"]):
@@ -191,25 +192,27 @@ Return JSON in this format:
         body = (
             f"Hi {greeting_name},\n\n"
             f"I came across your work at {clean_org} and wanted to reach out regarding opportunities with your engineering team. "
-            f"I specialize in building scalable software systems, Python engineering, and autonomous AI agents (portfolio & projects at {port}). "
+            f"I specialize in building scalable software systems, Python engineering, and autonomous AI agents{port_text}. "
             f"Would you be open to a quick 10-minute conversation this week if my background looks like a fit?\n\n"
             f"Best regards,\n{clean_sender}"
         )
     elif any(w in instr_lower for w in ["competition", "hackathon", "grant", "contest", "award", "judge"]):
         subj = f"Project Submission - {clean_sender}"
+        demo_text = f" (live demo and documentation at {port})" if port else ""
         body = (
             f"Hi {greeting_name},\n\n"
             f"I am writing to share our project submission and technical proposal for the competition. "
-            f"We have engineered an autonomous, privacy-first platform (live demo and documentation at {port}). "
+            f"We have engineered an autonomous, privacy-first platform{demo_text}. "
             f"We would love your feedback and are available to answer any questions during the review process.\n\n"
             f"Warmly,\n{clean_sender}"
         )
     else:
         subj = f"Quick question regarding {clean_org}'s setup"
+        case_text = f" (case studies at {port})" if port else ""
         body = (
             f"Hi {greeting_name},\n\n"
             f"I noticed an opportunity to elevate and streamline your current online customer experience at {clean_org}. "
-            f"We build clean, high-impact digital ordering solutions that launch in under 4 days (case studies at {port}). "
+            f"We build clean, high-impact digital solutions that launch in under 4 days{case_text}. "
             f"Mind if I share a quick 30-second walkthrough of how this works?\n\n"
             f"Best,\n{sender_first}"
         )
@@ -226,7 +229,7 @@ async def dispatch_outreach_mission_tool(input_data: MissionDispatchInput) -> Mi
     user_email = input_data.user_email.strip().lower()
     user_profile = dynamodb_service.get_user(user_email) or {}
     user_name = clean_user_name(user_profile.get("name"), user_email)
-    user_portfolio = user_profile.get("portfolio", "https://anasriaz.com")
+    user_portfolio = user_profile.get("portfolio", "")
 
 
     # Decrypt BYO-SMTP credentials if configured

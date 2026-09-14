@@ -8,6 +8,16 @@ import re
 from typing import Any, Dict, List, Optional
 
 
+NON_NAME_WORDS = {
+    "onlinework", "work", "job", "career", "careers", "admin", "administrator",
+    "contact", "sales", "support", "help", "info", "team", "hello", "hi", "office",
+    "billing", "mail", "purpose", "bot", "service", "services", "official", "user",
+    "account", "biz", "business", "media", "agency", "tech", "studio", "dev", "corp",
+    "group", "inbox", "noreply", "no-reply", "notification", "notifications", "client",
+    "customer", "lead", "member", "guest", "founder", "owner", "staff"
+}
+
+
 def clean_user_name(raw_name: Optional[str] = None, email: Optional[str] = None) -> str:
     """Derives a clean, natural human display name from raw metadata or email.
 
@@ -16,7 +26,8 @@ def clean_user_name(raw_name: Optional[str] = None, email: Optional[str] = None)
     - 'anasriaz' -> 'Anas Riaz'
     - 'john.doe@startup.com' -> 'John Doe'
     - 'Jane Designer' -> 'Jane Designer'
-    - Default fallback: 'Anas Riaz'
+    - Account handles like 'Onlinework' / 'onlineworkpurpose009' -> 'there'
+    - Default fallback: 'there' or clean name
     """
     if raw_name and raw_name.strip():
         name = raw_name.strip()
@@ -30,6 +41,9 @@ def clean_user_name(raw_name: Optional[str] = None, email: Optional[str] = None)
             return sub.capitalize()
         # If it doesn't look like an email or username with punctuation
         if "@" not in name and "_" not in name and len(name.split()) <= 4:
+            clean_token = name.split()[0].lower()
+            if clean_token in NON_NAME_WORDS or any(w in clean_token for w in ["onlinework", "purpose"]):
+                return "there"
             # If it's a single concatenated word longer than 14 chars, it's a username/handle
             if len(name.split()) == 1 and len(name) > 14:
                 return "there"
@@ -43,14 +57,19 @@ def clean_user_name(raw_name: Optional[str] = None, email: Optional[str] = None)
         if "anas" in local.lower():
             return "Anas Riaz"
         parts = re.split(r"[._\-+]+", local)
-        cleaned_parts = [p.capitalize() for p in parts if p and not p.isdigit() and p.lower() not in ["your", "my", "the", "info", "contact", "agent"]]
+        cleaned_parts = [
+            p.capitalize() for p in parts
+            if p and not p.isdigit() and p.lower() not in [
+                "your", "my", "the", "info", "contact", "agent", "onlinework", "purpose"
+            ] and p.lower() not in NON_NAME_WORDS
+        ]
         if cleaned_parts:
-            # If parts resulted in a single very long word > 14 chars
-            if len(cleaned_parts) == 1 and len(cleaned_parts[0]) > 14:
+            # If parts resulted in a single very long word > 14 chars or a non-name word
+            if len(cleaned_parts) == 1 and (len(cleaned_parts[0]) > 14 or cleaned_parts[0].lower() in NON_NAME_WORDS):
                 return "there"
             return " ".join(cleaned_parts)
 
-    return "Anas Riaz"
+    return "there"
 
 
 def extract_first_name(full_name: str) -> str:
@@ -60,17 +79,27 @@ def extract_first_name(full_name: str) -> str:
     tokens = full_name.strip().split()
     if not tokens:
         return "there"
+    token0 = tokens[0].strip(" -:\t\n()[]_")
+    token0_lower = token0.lower()
+
     honorifics = {"dr.", "mr.", "mrs.", "ms.", "prof."}
-    first_token = tokens[0].lower().rstrip(".") + "."
+    first_token = token0_lower.rstrip(".") + "."
     if first_token in honorifics and len(tokens) > 1:
-        return f"{tokens[0]} {tokens[1]}"
+        return f"{token0} {tokens[1]}"
+
     # If the token is 'Youranasriaz', resolve to Anas
-    if "anas" in tokens[0].lower():
+    if "anas" in token0_lower:
         return "Anas"
-    # If it contains digits, @, or is a long technical handle > 14 chars
-    if any(c.isdigit() for c in tokens[0]) or "@" in tokens[0] or len(tokens[0]) > 14 or tokens[0].lower() == "there":
+
+    # If it matches generic account handle/role or ends in generic words
+    if token0_lower in NON_NAME_WORDS or any(w in token0_lower for w in ["onlinework", "noreply", "purpose"]):
         return "there"
-    return tokens[0]
+
+    # If it contains digits, @, or is a long technical handle > 14 chars
+    if any(c.isdigit() for c in token0) or "@" in token0 or len(token0) > 14 or token0_lower == "there":
+        return "there"
+
+    return token0
 
 
 def extract_active_reply_text(body: str) -> str:
@@ -325,11 +354,10 @@ def build_user_email_footer(user_profile: Optional[Dict[str, Any]] = None) -> st
 
 
 def render_html_email(body_text: str, user_profile: Optional[Dict[str, Any]] = None) -> str:
-    """Renders an executive, responsive HTML email with a sleek grey footer.
+    """Renders an executive, responsive HTML email card with modern SaaS styling.
 
-    Matches modern SaaS and Google account notification styling (Screenshot reference).
-    Ensures the privacy and SMTP control box is distinct, elegant, and never mixes
-    with the email body.
+    Matches top-tier notification designs (Linear, Stripe, Notion).
+    Ensures clear visual hierarchy, crisp card containment, and distinct privacy footer.
     """
     import html
 
@@ -345,32 +373,75 @@ def render_html_email(body_text: str, user_profile: Optional[Dict[str, Any]] = N
         idx = body_text.find("⚙️ Payaam User Privacy & Email Controls")
         footer_plain = body_text[idx:].strip()
         main_text = body_text[:idx].strip()
+    elif "⚙️ Payaam Privacy & Email Controls" in body_text:
+        idx = body_text.find("⚙️ Payaam Privacy & Email Controls")
+        footer_plain = body_text[idx:].strip()
+        main_text = body_text[:idx].strip()
 
     # Format body into clean HTML blocks
     paragraphs = re.split(r"\n{2,}", main_text)
     formatted_paras = []
+
     for p in paragraphs:
-        lines = p.strip().split("\n")
-        # Check if list of bullet points or numbered items
-        if all(line.strip().startswith(("•", "-", "*", "1.", "2.", "3.", "4.")) for line in lines if line.strip()):
+        lines = [ln for ln in p.strip().split("\n") if ln.strip()]
+        if not lines:
+            continue
+
+        # Check if first line is a greeting
+        if len(lines) == 1 and re.match(r"^(?:Hello|Hi|Hey|Welcome)\b.*[!:]$", lines[0].strip(), re.IGNORECASE):
+            greeting_text = html.escape(lines[0].strip())
+            formatted_paras.append(
+                f'<div style="font-size: 17px; font-weight: 700; color: #0f172a; margin-bottom: 14px; letter-spacing: -0.2px;">{greeting_text}</div>'
+            )
+            continue
+
+        # Check if first line is a section header (e.g. starts with emoji, or ends with ':')
+        first_line = lines[0].strip()
+        has_section_header = bool(re.match(r"^[\U00010000-\U0010ffff\u2600-\u27ff\u2b50\u2705\u2728\u2714\u2709\ufe0f]|^(?:What I Can Do|Quick Ways|Next Steps|Summary|How to Get Started)\b", first_line)) and first_line.endswith(":")
+
+        start_idx = 0
+        if has_section_header:
+            hdr_text = html.escape(first_line)
+            formatted_paras.append(
+                f'<div style="font-size: 13.5px; font-weight: 700; color: #0f172a; text-transform: uppercase; letter-spacing: 0.5px; margin: 24px 0 10px 0;">{hdr_text}</div>'
+            )
+            start_idx = 1
+
+        remaining_lines = lines[start_idx:]
+        if not remaining_lines:
+            continue
+
+        # Check if lines are bullet points or numbered items
+        is_list = any(re.match(r"^[\s•\-*]+|\s*^\d+\.\s*", ln) for ln in remaining_lines)
+        if is_list:
             items_html = []
-            for line in lines:
-                if not line.strip():
-                    continue
-                clean_item = re.sub(r"^[\s•\-*]+|\s*^\d+\.\s*", "", line.strip())
-                if ":" in clean_item:
+            for ln in remaining_lines:
+                clean_item = re.sub(r"^[\s•\-*]+|\s*^\d+\.\s*", "", ln.strip())
+                if ":" in clean_item and not clean_item.startswith("http"):
                     k, v = clean_item.split(":", 1)
-                    item_rendered = f"<strong>{html.escape(k)}:</strong> {html.escape(v)}"
+                    k_clean = html.escape(k.strip())
+                    v_clean = html.escape(v.strip())
+                    v_clean = re.sub(r"(https?://[^\s<]+)", r'<a href="\1" style="color: #2563eb; text-decoration: none; font-weight: 500;">\1</a>', v_clean)
+                    item_rendered = f"""
+                    <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px 16px; margin-bottom: 8px;">
+                      <div style="font-weight: 600; font-size: 13.5px; color: #0f172a; margin-bottom: 2px;">{k_clean}</div>
+                      <div style="font-size: 13px; color: #475569; line-height: 1.5;">{v_clean}</div>
+                    </div>"""
                 else:
-                    item_rendered = html.escape(clean_item)
-                item_rendered = re.sub(r"(https?://[^\s<]+)", r'<a href="\1" style="color: #1a73e8; text-decoration: none;">\1</a>', item_rendered)
-                items_html.append(f'<li style="margin-bottom: 6px; line-height: 1.5;">{item_rendered}</li>')
-            formatted_paras.append(f'<ul style="margin: 8px 0 16px 20px; padding: 0; color: #202124; font-size: 14px;">{"".join(items_html)}</ul>')
+                    item_clean = html.escape(clean_item)
+                    item_clean = re.sub(r"(https?://[^\s<]+)", r'<a href="\1" style="color: #2563eb; text-decoration: none; font-weight: 500;">\1</a>', item_clean)
+                    item_rendered = f"""
+                    <div style="display: flex; align-items: flex-start; margin-bottom: 8px; font-size: 13.5px; color: #334155; line-height: 1.5;">
+                      <span style="color: #2563eb; margin-right: 8px; font-weight: bold; font-size: 15px; line-height: 1.2;">•</span>
+                      <span>{item_clean}</span>
+                    </div>"""
+                items_html.append(item_rendered)
+            formatted_paras.append(f'<div style="margin: 8px 0 16px 0;">{"".join(items_html)}</div>')
         else:
-            escaped_p = html.escape("\n".join(lines))
+            escaped_p = html.escape("\n".join(remaining_lines))
             escaped_p = escaped_p.replace("\n", "<br>")
-            escaped_p = re.sub(r"(https?://[^\s<]+)", r'<a href="\1" style="color: #1a73e8; text-decoration: underline;">\1</a>', escaped_p)
-            formatted_paras.append(f'<p style="margin: 0 0 14px 0; line-height: 1.6; color: #202124; font-size: 14px;">{escaped_p}</p>')
+            escaped_p = re.sub(r"(https?://[^\s<]+)", r'<a href="\1" style="color: #2563eb; text-decoration: underline; font-weight: 500;">\1</a>', escaped_p)
+            formatted_paras.append(f'<p style="margin: 0 0 14px 0; line-height: 1.65; color: #334155; font-size: 14.5px;">{escaped_p}</p>')
 
     main_html = "\n".join(formatted_paras)
 
@@ -394,30 +465,49 @@ def render_html_email(body_text: str, user_profile: Optional[Dict[str, Any]] = N
         deletion_line = f'• <strong>Delete Profile &amp; Data:</strong> Reply <code style="background-color: #e8eaed; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 600;">DELETE MY DATA {html.escape(pin)}</code> at any time to permanently purge all data.'
 
         footer_html = f"""
-  <div style="margin-top: 36px; padding: 16px 20px; background-color: #f8f9fa; border: 1px solid #e8eaed; border-radius: 8px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 12px; line-height: 1.6; color: #5f6368;">
-    <div style="font-weight: 600; color: #3c4043; margin-bottom: 8px; display: flex; align-items: center; gap: 6px;">
-      <span>⚙️ Payaam Privacy &amp; Email Controls</span>
-    </div>
-    <div style="margin-bottom: 6px; color: #5f6368;">
-      {smtp_line}
-    </div>
-    <div style="color: #5f6368;">
-      {deletion_line}
-    </div>
-  </div>
-"""
+        <div style="background-color: #f8f9fa; border-top: 1px solid #e8eaed; padding: 18px 24px; font-size: 12px; line-height: 1.6; color: #5f6368;">
+          <div style="font-weight: 600; color: #3c4043; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">
+            ⚙️ Payaam Privacy &amp; Email Controls
+          </div>
+          <div style="margin-bottom: 6px; color: #5f6368;">
+            {smtp_line}
+          </div>
+          <div style="color: #5f6368;">
+            {deletion_line}
+          </div>
+        </div>"""
 
     return f"""<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Payaam</title>
 </head>
-<body style="margin: 0; padding: 24px 16px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #ffffff; color: #202124;">
-  <div style="max-width: 620px; margin: 0 auto;">
-    {main_html}
-    {footer_html}
-  </div>
+<body style="margin: 0; padding: 32px 12px; background-color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; color: #1e293b;">
+  <table width="100%" border="0" cellpadding="0" cellspacing="0" style="margin: 0 auto; max-width: 580px;">
+    <tr>
+      <td align="center">
+        <div style="background-color: #ffffff; border: 1px solid #e8eaed; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 14px rgba(15, 23, 42, 0.05); text-align: left;">
+          <!-- Sleek Header Bar -->
+          <div style="padding: 16px 24px; background-color: #ffffff; border-bottom: 1px solid #f1f5f9; display: flex; align-items: center; justify-content: space-between;">
+            <div style="font-size: 15px; font-weight: 700; color: #0f172a; letter-spacing: -0.2px;">
+              Payaam <span style="font-weight: 400; font-size: 12.5px; color: #64748b; margin-left: 6px;">Autonomous Email Delegate</span>
+            </div>
+            <div style="font-size: 11px; font-weight: 600; color: #2563eb; background-color: #eff6ff; border: 1px solid #dbeafe; padding: 2px 8px; border-radius: 9999px;">
+              Zero-UI
+            </div>
+          </div>
+          <!-- Card Body -->
+          <div style="padding: 28px 24px 20px 24px;">
+            {main_html}
+          </div>
+          <!-- Integrated Grey Footer -->
+          {footer_html}
+        </div>
+      </td>
+    </tr>
+  </table>
 </body>
 </html>"""
 

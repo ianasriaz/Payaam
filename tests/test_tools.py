@@ -32,6 +32,8 @@ async def test_onboarding_greeting_detection():
     assert "Welcome to Payaam" in res.response_subject
     assert "DELETE MY DATA" in res.response_body
     assert "CONNECT_SMTP" in res.response_body
+    assert "Anas, Full-Stack" not in res.response_body
+    assert "Quick Ways to Get Started" in res.response_body
 
 
 @pytest.mark.asyncio
@@ -221,11 +223,14 @@ def test_clean_user_name_and_greeting_resolution():
     assert clean_user_name(None, "youranasriaz@gmail.com") == "Anas Riaz"
     assert clean_user_name(None, "anas@anasriaz.com") == "Anas Riaz"
     assert clean_user_name("Jane Designer", "jane@design.io") == "Jane Designer"
+    assert clean_user_name("Onlinework", "onlineworkpurpose009@gmail.com") == "there"
 
     assert extract_first_name("Anas Riaz") == "Anas"
     assert extract_first_name("Dr. Alan Turing") == "Dr. Alan"
     assert extract_first_name("Awssbgairuniversityislamabad") == "there"
     assert extract_first_name("onlineworkpurpose009") == "there"
+    assert extract_first_name("Onlinework") == "there"
+    assert extract_first_name("Admin") == "there"
 
     assert extract_prospect_greeting_name("Greenleaf Bistro") == "Greenleaf Bistro team"
     assert extract_prospect_greeting_name("Roast & Bean") == "there" or "Roast" in extract_prospect_greeting_name("Roast & Bean")
@@ -283,6 +288,8 @@ async def test_company_profile_attachment_ingestion_and_user_footer():
     assert "background-color: #f8f9fa" in html_output
     assert "border: 1px solid #e8eaed" in html_output
     assert "DELETE MY DATA PYM-1234" in html_output
+    assert "max-width: 580px" in html_output
+    assert "Zero-UI" in html_output
 
 
 @pytest.mark.asyncio
@@ -365,6 +372,27 @@ async def test_lead_sends_user_command_or_new_mission_not_routed_to_prior_sender
     res_mission = await payaam_agent.process_inbound_email(em_mission)
     assert res_mission["route"] == "NEW_MISSION_DISPATCHED"
     assert res_mission["dispatched_count"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_user_inquiry_without_leads_triggers_advisory_response():
+    from src.agent.core import payaam_agent
+    from src.services.email_service import InboundEmail
+
+    em_inquiry = InboundEmail(
+        message_id="<msg-inquiry-1@agency.com>",
+        subject="Can you pitch local corporate event planners in New York?",
+        from_address="founder@cateringco.com",
+        from_name="Catering Founder",
+        to_address="agent@anasriaz.com",
+        date="Mon, 14 Sep 2026 12:00:00 +0000",
+        body_text="Hi Payaam, we run a boutique catering and corporate event service in New York. Can you help us reach out to corporate event planners and pitch our holiday packages?",
+    )
+    res = await payaam_agent.process_inbound_email(em_inquiry)
+    assert res["route"] == "ADVISORY_RESPONSE"
+    assert res["action"] == "PLANNING_OR_INQUIRY"
+    assert res["response_sent"] is True
+
 
 
 
