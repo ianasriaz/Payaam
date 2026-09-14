@@ -10,7 +10,7 @@
 [![AWS DynamoDB](https://img.shields.io/badge/AWS-Amazon%20DynamoDB-blue.svg)](https://aws.amazon.com/dynamodb/)
 [![Strands Agents](https://img.shields.io/badge/SDK-Strands%20Agents-blueviolet.svg)](https://github.com/strands-agents)
 [![Email: Purelymail](https://img.shields.io/badge/Protocol-Purelymail%20SMTP%2FIMAP-blue.svg)](https://purelymail.com)
-[![Live on AWS](https://img.shields.io/badge/Hosted-AWS%20EC2%20(t3.micro)-success.svg)](http://54.226.141.96:8000/api/health)
+[![Live on AWS](https://img.shields.io/badge/Hosted-AWS%20EC2%20(t3.micro)-success.svg)](http://3.87.129.43:8000/api/health)
 
 ---
 
@@ -60,9 +60,9 @@ User (Any Email Client) ──> Purelymail IMAP ──> Strands Agent Core (Clau
 ### Live AWS Cloud Deployment
 - **AWS Region**: `us-east-1`
 - **Instance**: `t3.micro` (Amazon Linux 2023)
-- **Public IP**: `54.226.141.96`
+- **Public IP**: `3.87.129.43`
 - **Agent Email Gateway**: `agent@anasriaz.com` (Purelymail 24/7 Daemon)
-- **Health Check API**: [http://54.226.141.96:8000/api/health](http://54.226.141.96:8000/api/health)
+- **Health Check API**: [http://3.87.129.43:8000/api/health](http://3.87.129.43:8000/api/health)
 - **Background Daemons**:
   - `payaam-worker.service`: 24/7 Purelymail IMAP listener and Strands Agent loop.
   - `payaam-sandbox.service`: FastAPI Health & Monitoring API on port 8000.
