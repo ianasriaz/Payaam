@@ -12,6 +12,7 @@ import re
 from typing import Any, Dict, Optional
 from pydantic import BaseModel, Field
 from strands import tool
+from src.agent.copywriting import clean_user_name, extract_first_name
 from src.services.crypto import encrypt_secret
 from src.services.dynamodb import dynamodb_service
 
@@ -132,7 +133,7 @@ def handle_onboarding_or_greeting_tool(input_data: OnboardingInput) -> Onboardin
 
             user = dynamodb_service.get_user(norm_email) or {
                 "email": norm_email,
-                "name": input_data.user_name or norm_email.split("@")[0].title(),
+                "name": clean_user_name(input_data.user_name, norm_email),
             }
             user["smtp_config"] = {
                 "host": raw_host,
@@ -178,7 +179,7 @@ def handle_onboarding_or_greeting_tool(input_data: OnboardingInput) -> Onboardin
         user_data = dict(existing_user or {})
         user_data.update({
             "email": norm_email,
-            "name": input_data.user_name or user_data.get("name") or norm_email.split("@")[0].title(),
+            "name": clean_user_name(input_data.user_name or user_data.get("name"), norm_email),
             "bio_notes": body,
             "portfolio": portfolio or user_data.get("portfolio", ""),
         })
@@ -216,16 +217,17 @@ def handle_onboarding_or_greeting_tool(input_data: OnboardingInput) -> Onboardin
         if not existing_user:
             existing_user = dynamodb_service.save_user({
                 "email": norm_email,
-                "name": input_data.user_name or norm_email.split("@")[0].title(),
+                "name": clean_user_name(input_data.user_name, norm_email),
             })
 
         deletion_pin = existing_user.get("deletion_pin", "PYM-XXXX")
+        user_first = extract_first_name(existing_user.get("name", "there"))
 
         return OnboardingResult(
             action_type="GREETING",
             response_subject="👋 Welcome to Payaam - Your Background Autonomous Email Agent",
             response_body=(
-                f"Hello {existing_user.get('name', 'there')}!\n\n"
+                f"Hello {user_first}!\n\n"
                 "I am Payaam (پیام), an autonomous AI agent that handles repetitive email outreach, "
                 "job pitches, and client follow-ups silently in the background.\n\n"
                 "💡 What I Can Do For You:\n"

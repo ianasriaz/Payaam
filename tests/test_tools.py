@@ -149,3 +149,47 @@ async def test_personalized_pitch_copy_fallback():
     assert "Dr. Alan" in comp_pitch["body"] or "Alan" in comp_pitch["body"]
     assert any(w in comp_pitch["body"].lower() for w in ["hackathon", "competition", "submitting", "submission", "project", "payaam"])
 
+
+def test_sanitize_email_copy_strips_markdown_headers_and_ai_cliches():
+    from src.agent.copywriting import sanitize_email_copy
+
+    raw_ai_output = """# Ready-to-Send Response
+
+Thanks so much for your interest! I appreciate you reaching out.
+
+Our pricing is flexible and tailored to your restaurant's specific volume and feature needs. Rather than sending a generic quote, I'd like to show you exactly how this works for Greenleaf Bistro.
+
+Would you have 5 minutes this week for a quick call? I can walk you through a live demo and share pricing tiers customized for your operation.
+
+Let me know what works best for your schedule.
+
+Cheers,
+Youranasriaz"""
+
+    sanitized = sanitize_email_copy(raw_ai_output, user_name="Youranasriaz")
+
+    assert "# Ready-to-Send Response" not in sanitized
+    assert "#" not in sanitized
+    assert "Thanks so much for your interest" not in sanitized
+    assert "I appreciate you reaching out" not in sanitized
+    assert "Rather than sending a generic quote" not in sanitized
+    assert "Youranasriaz" not in sanitized
+    assert "Best,\nAnas" in sanitized or "Anas" in sanitized
+
+
+def test_clean_user_name_and_greeting_resolution():
+    from src.agent.copywriting import clean_user_name, extract_first_name, extract_prospect_greeting_name
+
+    assert clean_user_name("Youranasriaz", "youranasriaz@gmail.com") == "Anas Riaz"
+    assert clean_user_name(None, "youranasriaz@gmail.com") == "Anas Riaz"
+    assert clean_user_name(None, "anas@anasriaz.com") == "Anas Riaz"
+    assert clean_user_name("Jane Designer", "jane@design.io") == "Jane Designer"
+
+    assert extract_first_name("Anas Riaz") == "Anas"
+    assert extract_first_name("Dr. Alan Turing") == "Dr. Alan"
+
+    assert extract_prospect_greeting_name("Greenleaf Bistro") == "Greenleaf Bistro team"
+    assert extract_prospect_greeting_name("Roast & Bean") == "there" or "Roast" in extract_prospect_greeting_name("Roast & Bean")
+    assert extract_prospect_greeting_name("Sarah Jenkins (Head of Eng)") == "Sarah"
+    assert extract_prospect_greeting_name(None, "owp360@gmail.com") == "there"
+

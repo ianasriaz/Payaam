@@ -13,6 +13,7 @@ from strands.models import BedrockModel
 from src.config import settings
 from src.services.dynamodb import dynamodb_service
 from src.services.email_service import InboundEmail, email_service
+from src.agent.copywriting import clean_user_name, extract_first_name
 from src.agent.tools.onboarding import (
     handle_onboarding_or_greeting_tool,
     OnboardingInput,
@@ -194,11 +195,13 @@ class PayaamAgent:
         )
 
         # Send launch receipt back to the user
+        user_name = clean_user_name(email_data.from_name, sender)
+        user_first = extract_first_name(user_name)
         email_service.send_email(
             to_email=sender,
             subject=f"🚀 Payaam Mission Launched: {dispatch_res.mission_id}",
             body_text=(
-                f"Hello,\n\n"
+                f"Hey {user_first},\n\n"
                 f"{dispatch_res.summary_message}\n\n"
                 f"Payaam is now managing this outreach silently in the background. "
                 f"I will handle auto-responders, follow-ups, and routine questions automatically, "

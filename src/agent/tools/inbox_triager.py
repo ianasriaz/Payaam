@@ -12,6 +12,13 @@ import re
 from typing import Any, Dict, Optional
 from pydantic import BaseModel, Field
 from strands import tool
+from src.agent.copywriting import (
+    clean_user_name,
+    extract_first_name,
+    extract_prospect_greeting_name,
+    sanitize_email_copy,
+    sanitize_subject_line,
+)
 from src.services.bedrock import bedrock_service, extract_json_from_text
 from src.services.dynamodb import dynamodb_service
 from src.services.email_service import email_service
@@ -36,36 +43,61 @@ class InboundTriageResult(BaseModel):
     client_reply_body: Optional[str] = Field(default=None)
 
 
-async def _classify_lead_reply(body: str, subject: str, user_vault: Dict[str, Any]) -> Dict[str, Any]:
-    """Uses Bedrock Claude 3.5 Haiku to classify intent and extract deal signals."""
-    prompt = f"""You are triaging an inbound reply from a prospective client or service provider.
+async def _classify_lead_reply(
+    body: str,
+    subject: str,
+    user_vault: Dict[str, Any],
+    prospect_name: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Uses Bedrock Claude 3.5 Haiku to classify intent and draft an authentic human reply."""
+    user_name = clean_user_name(user_vault.get("name"))
+    user_first = extract_first_name(user_name)
+    portfolio = user_vault.get("portfolio", "https://anasriaz.com")
+    addressee = prospect_name or "there"
+
+    prompt = f"""You are triaging an inbound reply from a prospective client to {user_name}.
 Subject: {subject}
 Body: {body}
-User Vault: {user_vault}
+Sender Name: {user_name} (Sign off as '{user_first}')
+Portfolio: {portfolio}
 
 Categories:
 1. "IGNORE_AUTO": Out of office, automated vacation notices, delivery failure/bounce.
 2. "OPT_OUT": "Unsubscribe", "Not interested", "Remove me", "Wrong email", "No thanks".
-3. "RESOLVE_SILENTLY": Inquiring about portfolio, past samples, or booking link that are already available in User Vault.
-4. "ACTION_NEEDED": Pricing negotiation (budget counter), custom requirements, asking for discount, or scope changes.
+3. "RESOLVE_SILENTLY": Inquiring about portfolio, past samples, or booking link that are already available.
+4. "ACTION_NEEDED": Pricing questions ('what is your price?'), budget counters ('can you do $200?'), custom requirements, or scope inquiries.
 5. "RESULT_ACHIEVED": Explicitly agreed to a meeting time, ready to hire/sign, or confirmed price/deal.
+
+Copywriting Guidelines for "suggested_reply":
+- TONE: Natural, direct, conversational human peer. Sound like an experienced builder or freelancer writing a quick email from a laptop. 2 to 4 sentences maximum.
+- PRICING INQUIRIES: Be transparent, direct, and confident. State a realistic ballpark range (e.g. '$250 to $450 one-time setup depending on menu size and ordering flow—zero monthly software fees'), then offer a zero-pressure 5-minute screen share: 'Would you be open to a quick 5-min walkthrough tomorrow or Thursday to see the live WhatsApp ordering in action?'
+- BUDGET COUNTERS: Be warm and accommodating while maintaining standards.
+- ABSOLUTELY FORBIDDEN:
+  * NO markdown headers (NEVER write '# Ready-to-Send Response', '## Draft', etc.).
+  * NO quotes wrapping the text.
+  * NO corporate AI pleasantries ('Thanks so much for reaching out! I appreciate your interest', 'I hope this email finds you well', 'Rather than sending a generic quote', 'customized for your operation').
+  * NO preambles or labels ('Here is the draft:').
+- SIGNOFF: End cleanly with 'Best,\n{user_first}' or 'Cheers,\n{user_first}'.
 
 Output valid JSON:
 {{
   "category": "ONE_OF_THE_ABOVE",
   "summary": "1-sentence summary of reply",
   "client_question": "Key question or objection if any",
-  "suggested_reply": "Proposed polite response"
+  "suggested_reply": "Clean, natural raw email body"
 }}
 """
     try:
         raw_res = await bedrock_service.converse(
             prompt=prompt,
-            system_prompt="You are a strict B2B sales email intent classifier.",
-            temperature=0.1,
+            system_prompt="You are an expert sales communication assistant. You produce natural, human, high-converting emails without AI tropes or leaked markdown headers.",
+            temperature=0.2,
             max_tokens=512,
         )
-        return extract_json_from_text(raw_res)
+        parsed = extract_json_from_text(raw_res)
+        if "suggested_reply" in parsed:
+            parsed["suggested_reply"] = sanitize_email_copy(parsed["suggested_reply"], user_name=user_name)
+        return parsed
     except Exception as exc:
         logger.warning(f"Classification fallback triggered: {exc}")
 
@@ -76,9 +108,17 @@ Output valid JSON:
     if any(w in body_lower for w in ["not interested", "unsubscribe", "remove me", "stop"]):
         return {"category": "OPT_OUT", "summary": "Prospect opted out", "suggested_reply": ""}
     if any(w in body_lower for w in ["call", "meeting", "zoom", "thursday", "friday", "tomorrow", "sounds good"]):
-        return {"category": "RESULT_ACHIEVED", "summary": "Meeting or interest confirmed", "suggested_reply": "Let's schedule a call!"}
+        return {
+            "category": "RESULT_ACHIEVED",
+            "summary": "Meeting or interest confirmed",
+            "suggested_reply": f"Hi {addressee},\n\nSounds great! Let's connect for a brief 10-minute chat.\n\nBest,\n{user_first}",
+        }
 
-    return {"category": "ACTION_NEEDED", "summary": "Client sent specific inquiry", "suggested_reply": "Thank you for the inquiry."}
+    return {
+        "category": "ACTION_NEEDED",
+        "summary": "Client sent specific inquiry",
+        "suggested_reply": f"Hi {addressee},\n\nOur setup typically runs between $250 and $450 one-time depending on your menu size—no monthly software fees.\n\nWould you be open to a quick 5-minute screen share tomorrow or Thursday to see how the WhatsApp order flow works?\n\nBest,\n{user_first}",
+    }
 
 
 @tool
@@ -92,47 +132,69 @@ async def triage_inbound_email_tool(input_data: InboundTriageInput) -> InboundTr
     user_email = mission.get("user_email") if mission else None
     user_profile = dynamodb_service.get_user(user_email or from_addr) or {}
 
+    user_name = clean_user_name(user_profile.get("name"), user_email or from_addr)
+    user_first_name = extract_first_name(user_name)
+
     # -------------------------------------------------------------------------
     # Case A: Is the User Replying to an Action Card?
     # -------------------------------------------------------------------------
     if user_email and from_addr == user_email:
-        # User is giving rough instructions or saying "Approve"
         user_reply = input_data.body_text.strip()
         logger.info(f"User {from_addr} replied to Action Card: '{user_reply[:60]}'")
 
         target_client = mission.get("pending_client_email")
-        draft = mission.get("pending_draft", "")
+        raw_draft = mission.get("pending_draft", "")
+        clean_context = sanitize_email_copy(raw_draft, user_name=user_name)
 
-        final_email_text = draft
+        # Resolve prospect name from mission record
+        target_lead = next(
+            (l for l in mission.get("leads", []) if l.get("email", "").lower() == (target_client or "").lower()),
+            {},
+        )
+        prospect_greeting = extract_prospect_greeting_name(target_lead.get("business_name"), target_client)
+
+        final_email_text = clean_context
         if user_reply.lower() not in ["approve", "yes", "send", "ok", "confirm"]:
             # User gave rough notes -> Polish with Bedrock Claude
-            polish_prompt = f"""Transform these rough user notes into a polished, professional client response.
-Client: {target_client}
-Original Draft Context: {draft}
+            polish_prompt = f"""You are writing a natural, direct email response from {user_name} to a client.
+Client: {prospect_greeting} ({target_client})
+Original Draft Context:
+{clean_context}
+
 User's Rough Instructions: "{user_reply}"
 
-Rules:
-1. Keep it friendly, concise, and professional.
-2. Incorporate all adjustments (e.g. price change, file requests).
-3. Do not include subject or pleasantry placeholders; provide ready-to-send body text.
+Copywriting Rules:
+1. Tone: Warm, direct, professional human tone. Sound like an authentic person writing directly from their inbox, NOT an AI bot.
+2. Length: Short and punchy (2 to 4 sentences max).
+3. Faithfully implement user adjustments (e.g. price counter, timeline, required files).
+4. ABSOLUTELY FORBIDDEN:
+   - NO markdown headings (NEVER write '# Ready-to-Send Response', '## Draft', etc.).
+   - NO meta-labels ('Here is the response:', 'Draft:', 'Subject:').
+   - NO quotes wrapping the text.
+   - NO robotic pleasantries ('Thanks so much for reaching out', 'Rather than sending a generic quote').
+5. Start directly with the greeting 'Hi {prospect_greeting},' and sign off with 'Best,\n{user_first_name}' or 'Cheers,\n{user_first_name}'.
+6. Output ONLY the raw email body text.
 """
             try:
-                final_email_text = await bedrock_service.converse(
+                raw_polished = await bedrock_service.converse(
                     prompt=polish_prompt,
-                    system_prompt="You are an expert client communications assistant.",
+                    system_prompt="You are an expert client communications copywriter. You produce concise, high-converting, 100% human-sounding emails.",
                     temperature=0.2,
                 )
+                final_email_text = sanitize_email_copy(raw_polished, user_name=user_name)
             except Exception as exc:
                 logger.warning(f"Polish fallback: {exc}")
-                final_email_text = f"{draft}\n\nUpdate: {user_reply}"
+                final_email_text = sanitize_email_copy(f"{clean_context}\n\nUpdate: {user_reply}", user_name=user_name)
+        else:
+            final_email_text = clean_context
 
         # Dispatch polished reply to client
         if target_client:
             email_service.send_email(
                 to_email=target_client,
-                subject=f"Re: {input_data.subject}",
+                subject=f"Re: {sanitize_subject_line(input_data.subject)}",
                 body_text=final_email_text,
-                from_name=user_profile.get("name", "Payaam"),
+                from_name=user_name,
                 in_reply_to=input_data.in_reply_to,
                 thread_ref=thread_ref,
             )
@@ -147,7 +209,12 @@ Rules:
                 intent_category="USER_REFINEMENT",
                 should_surface_to_user=True,
                 user_notification_subject="✅ Client Response Dispatched",
-                user_notification_body=f"Your instructions were polished and dispatched to {target_client}:\n\n\"{final_email_text}\"",
+                user_notification_body=(
+                    f"Your instructions were polished and dispatched to {target_client}:\n\n"
+                    f"----------------------------------------\n"
+                    f"{final_email_text}\n"
+                    f"----------------------------------------"
+                ),
                 client_reply_dispatched=True,
                 client_reply_body=final_email_text,
             )
@@ -155,10 +222,20 @@ Rules:
     # -------------------------------------------------------------------------
     # Case B: Inbound Email from a Prospect / Lead
     # -------------------------------------------------------------------------
+    # Resolve prospect name from active mission
+    matching_lead = {}
+    if mission:
+        matching_lead = next(
+            (l for l in mission.get("leads", []) if l.get("email", "").lower() == from_addr),
+            {},
+        )
+    prospect_greeting = extract_prospect_greeting_name(matching_lead.get("business_name"), from_addr)
+
     classification = await _classify_lead_reply(
         body=input_data.body_text,
         subject=input_data.subject,
         user_vault=user_profile,
+        prospect_name=prospect_greeting,
     )
     cat = classification.get("category", "ACTION_NEEDED")
 
@@ -184,16 +261,17 @@ Rules:
     # 3. Silent Vault Resolution (e.g. asking for portfolio links already in vault)
     if cat == "RESOLVE_SILENTLY" and user_profile.get("portfolio"):
         vault_reply = (
-            f"Hi {from_addr.split('@')[0].title()},\n\n"
-            f"Thanks for following up! You can check out samples of our recent work here: {user_profile.get('portfolio')}.\n\n"
-            f"Let me know if you'd like to explore a quick demo for your business!\n\n"
-            f"Best,\n{user_profile.get('name', 'Payaam')}"
+            f"Hi {prospect_greeting},\n\n"
+            f"Here are samples of our recent work and live setups: {user_profile.get('portfolio')}.\n\n"
+            f"Would you be open to a quick 5-minute screen share to see how this works for your business?\n\n"
+            f"Best,\n{user_first_name}"
         )
+        vault_reply = sanitize_email_copy(vault_reply, user_name=user_name)
         email_service.send_email(
             to_email=from_addr,
-            subject=f"Re: {input_data.subject}",
+            subject=f"Re: {sanitize_subject_line(input_data.subject)}",
             body_text=vault_reply,
-            from_name=user_profile.get("name", "Payaam"),
+            from_name=user_name,
             in_reply_to=input_data.in_reply_to,
             thread_ref=thread_ref,
         )
@@ -206,7 +284,8 @@ Rules:
 
     # 4. Action Needed (Two-Knock Knock #1)
     if cat == "ACTION_NEEDED":
-        suggested_draft = classification.get("suggested_reply", "Thank you for getting back to us.")
+        raw_draft = classification.get("suggested_reply", f"Hi {prospect_greeting},\n\nHappy to discuss the details.\n\nBest,\n{user_first_name}")
+        suggested_draft = sanitize_email_copy(raw_draft, user_name=user_name)
         if mission:
             mission["pending_client_email"] = from_addr
             mission["pending_draft"] = suggested_draft
@@ -215,11 +294,13 @@ Rules:
 
         action_subject = f"🔥 Payaam Action Needed: {from_addr} Replied"
         action_body = (
-            f"Hey {user_profile.get('name', 'there')},\n\n"
+            f"Hey {user_first_name},\n\n"
             f"Prospect {from_addr} replied to your outreach:\n"
             f"\"{input_data.body_text}\"\n\n"
             f"Suggested Reply Draft:\n"
-            f"\"{suggested_draft}\"\n\n"
+            f"----------------------------------------\n"
+            f"{suggested_draft}\n"
+            f"----------------------------------------\n\n"
             f"👉 How would you like to respond?\n"
             f"Reply 'Approve' to send as-is, or reply with your rough adjustments (e.g. 'Counter with $200 and ask for their menu')."
         )
@@ -233,7 +314,7 @@ Rules:
     # 5. Result Achieved (Two-Knock Knock #2)
     result_subject = f"🎉 Payaam Deal Signal / Meeting Ready: {from_addr}"
     result_body = (
-        f"Hey {user_profile.get('name', 'there')}!\n\n"
+        f"Hey {user_first_name}!\n\n"
         f"Great news! Prospect {from_addr} sent a positive signal or agreed to connect:\n"
         f"\"{input_data.body_text}\"\n\n"
         f"Summary: {classification.get('summary')}\n"
@@ -250,3 +331,4 @@ Rules:
         user_notification_subject=result_subject,
         user_notification_body=result_body,
     )
+

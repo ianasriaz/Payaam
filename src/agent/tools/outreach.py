@@ -14,6 +14,13 @@ import secrets
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 from strands import tool
+from src.agent.copywriting import (
+    clean_user_name,
+    extract_first_name,
+    extract_prospect_greeting_name,
+    sanitize_email_copy,
+    sanitize_subject_line,
+)
 from src.services.bedrock import bedrock_service
 from src.services.crypto import decrypt_secret
 from src.services.dynamodb import dynamodb_service
@@ -55,15 +62,7 @@ def _clean_lead_name(raw: Optional[str], email: str) -> str:
 
 def _extract_greeting_name(raw_name: str) -> str:
     """Extracts a personalized greeting name (e.g. 'Sarah' or 'Dr. Chen') from a lead's full description."""
-    cleaned = re.sub(r"\(.*?\)", "", raw_name).strip(" -:\t\n()[]")
-    tokens = cleaned.split()
-    if not tokens:
-        return "there"
-    honorifics = {"dr.", "mr.", "mrs.", "ms.", "prof."}
-    first_token = tokens[0].lower().rstrip(".") + "."
-    if first_token in honorifics and len(tokens) > 1:
-        return f"{tokens[0]} {tokens[1]}"
-    return tokens[0]
+    return extract_prospect_greeting_name(raw_name)
 
 
 def _extract_leads_from_text(text: str) -> List[LeadTarget]:
@@ -122,43 +121,43 @@ async def _generate_pitch_copy(
     user_portfolio: str,
     instructions: str,
 ) -> Dict[str, str]:
-    """Uses Bedrock Claude 3.5 Sonnet to draft an individualized, high-converting outreach email.
+    """Uses Bedrock Claude 3.5 Sonnet to draft an individualized, high-converting outreach email."""
+    clean_sender = clean_user_name(user_name)
+    sender_first = extract_first_name(clean_sender)
+    greeting_name = extract_prospect_greeting_name(target_name, target_email)
 
-    Dynamically adapts for:
-    - Job applications / recruiting pitches to hiring managers.
-    - Competition, grant, or hackathon project submissions to judges.
-    - B2B client acquisition or freelance services.
-    """
-    greeting_name = _extract_greeting_name(target_name)
-
-    prompt = f"""You are drafting a concise, highly personalized outreach email for {user_name}.
+    prompt = f"""You are drafting a concise, highly personalized outreach email for {clean_sender}.
 Target Recipient: {target_name} ({target_email})
-Sender Name: {user_name}
-Sender Portfolio / Work: {user_portfolio or 'Available upon request'}
+Sender Name: {clean_sender}
+Sender Portfolio / Work: {user_portfolio or 'https://anasriaz.com'}
 Mission Intent & Instructions: {instructions}
 
 Personalization & Intent Rules:
 1. GREETING:
-   - Address the individual by their name (e.g., 'Hi {greeting_name},' or 'Dear {greeting_name},').
-   - If the target is strictly an organization with no person specified, use 'Hi {target_name} team,'.
+   - Address the individual or team naturally: 'Hi {greeting_name},'
    - Never use robotic placeholders like '[Name]', 'Dear Sir/Madam', or 'To Whom It May Concern'.
 2. ADAPT TO THE GOAL:
    - JOB / HIRING APPLICATION:
      * Hook: Reference their company/team and why the role/work stands out.
-     * Proof: Highlight {user_name}'s specific technical strengths and impact requested in the instructions, citing the portfolio ({user_portfolio or 'portfolio'}).
+     * Proof: Highlight {clean_sender}'s specific technical strengths and impact requested in the instructions, citing portfolio ({user_portfolio or 'portfolio'}).
      * Call to Action: Low-friction invitation (e.g., 'Would you be open to a brief 10-minute chat this week if my background aligns?').
    - COMPETITION / HACKATHON / GRANT PITCH:
      * Hook: Introduce the project and the specific problem it solves for the competition/hackathon.
-     * Proof: Highlight the architecture, unique innovation, and link to the demo/repository ({user_portfolio or 'live demo'}).
-     * Call to Action: Respectfully invite their evaluation and offer to answer any technical questions.
+     * Proof: Highlight architecture, autonomous agent capabilities, and link to demo/repo ({user_portfolio or 'live demo'}).
+     * Call to Action: Respectfully invite their evaluation and offer to answer technical questions.
    - B2B CLIENT / FREELANCE OUTREACH:
      * Hook: Specific, empathetic observation about their current setup or customer experience.
      * Proof: High-impact turnaround, citing portfolio ({user_portfolio or 'case studies'}).
      * Call to Action: Zero-pressure soft question (e.g., 'Mind if I share a quick 30-second walkthrough?').
-3. LENGTH & STYLE:
+3. COPYWRITING RULES:
    - 3 to 4 punchy, respectful sentences.
-   - Crisp, engaging, human tone with zero generic fluff.
+   - Crisp, engaging, human tone with zero generic fluff. Sound like a real person writing a direct email, NOT an AI bot.
    - Tailor an eye-catching subject line mentioning the recipient, company, role, or project.
+   - ABSOLUTELY FORBIDDEN:
+     * NO markdown headers (NEVER write '# Ready-to-Send Response', '## Pitch', etc.).
+     * NO quotes wrapping the text.
+     * NO AI filler ('I hope this email finds you well', 'I am reaching out because').
+   - SIGNOFF: Sign off cleanly with 'Cheers,\n{sender_first}' or 'Best,\n{sender_first}'.
 
 Return JSON in this format:
 {{
@@ -169,13 +168,16 @@ Return JSON in this format:
     try:
         raw_response = await bedrock_service.converse(
             prompt=prompt,
-            system_prompt="You are an expert personalized outreach copywriter for professionals, builders, and solo creators.",
+            system_prompt="You are an expert personalized outreach copywriter for professionals, builders, and solo creators. You write 100% human, high-converting copy with zero AI tropes.",
             temperature=0.2,
         )
         from src.services.bedrock import extract_json_from_text
         parsed = extract_json_from_text(raw_response)
         if "subject" in parsed and "body" in parsed:
-            return parsed
+            return {
+                "subject": sanitize_subject_line(parsed["subject"]),
+                "body": sanitize_email_copy(parsed["body"], user_name=clean_sender),
+            }
     except Exception as exc:
         logger.warning(f"Bedrock pitch generation fallback ({exc})")
 
@@ -185,46 +187,47 @@ Return JSON in this format:
     clean_org = target_name.split("(")[0].strip()
 
     if any(w in instr_lower for w in ["job", "role", "hire", "hiring", "position", "engineer", "developer", "resume", "apply"]):
-        subj = f"Application / Engineering Inquiry - {user_name}"
+        subj = f"Application / Engineering Inquiry - {clean_sender}"
         body = (
             f"Hi {greeting_name},\n\n"
-            f"I came across your work at {clean_org} and wanted to reach out regarding the role and opportunities with your engineering team. "
+            f"I came across your work at {clean_org} and wanted to reach out regarding opportunities with your engineering team. "
             f"I specialize in building scalable software systems, Python engineering, and autonomous AI agents (portfolio & projects at {port}). "
             f"Would you be open to a quick 10-minute conversation this week if my background looks like a fit?\n\n"
-            f"Best regards,\n{user_name}"
+            f"Best regards,\n{clean_sender}"
         )
     elif any(w in instr_lower for w in ["competition", "hackathon", "grant", "contest", "award", "judge"]):
-        subj = f"Project Submission - {user_name}"
+        subj = f"Project Submission - {clean_sender}"
         body = (
             f"Hi {greeting_name},\n\n"
             f"I am writing to share our project submission and technical proposal for the competition. "
             f"We have engineered an autonomous, privacy-first platform (live demo and documentation at {port}). "
             f"We would love your feedback and are available to answer any questions during the review process.\n\n"
-            f"Warmly,\n{user_name}"
+            f"Warmly,\n{clean_sender}"
         )
     else:
         subj = f"Quick question regarding {clean_org}'s setup"
         body = (
             f"Hi {greeting_name},\n\n"
-            f"I noticed an opportunity to elevate and streamline your current online workflow at {clean_org}. "
-            f"We build clean, high-impact digital solutions that launch in under 4 days (case studies at {port}). "
+            f"I noticed an opportunity to elevate and streamline your current online customer experience at {clean_org}. "
+            f"We build clean, high-impact digital ordering solutions that launch in under 4 days (case studies at {port}). "
             f"Mind if I share a quick 30-second walkthrough of how this works?\n\n"
-            f"Best,\n{user_name}"
+            f"Best,\n{sender_first}"
         )
 
-    return {"subject": subj, "body": body}
+    return {
+        "subject": sanitize_subject_line(subj),
+        "body": sanitize_email_copy(body, user_name=clean_sender),
+    }
 
 
 @tool
 async def dispatch_outreach_mission_tool(input_data: MissionDispatchInput) -> MissionDispatchResult:
     """Dispatches personalized outreach emails to candidate leads with collision protection and state persistence."""
     user_email = input_data.user_email.strip().lower()
-    user_profile = dynamodb_service.get_user(user_email) or {
-        "name": user_email.split("@")[0].title(),
-        "portfolio": "https://anasriaz.com",
-    }
-    user_name = user_profile.get("name", "Freelance Consultant")
-    user_portfolio = user_profile.get("portfolio", "")
+    user_profile = dynamodb_service.get_user(user_email) or {}
+    user_name = clean_user_name(user_profile.get("name"), user_email)
+    user_portfolio = user_profile.get("portfolio", "https://anasriaz.com")
+
 
     # Decrypt BYO-SMTP credentials if configured
     custom_smtp = None
