@@ -50,10 +50,10 @@ def clean_user_name(raw_name: Optional[str] = None, email: Optional[str] = None)
 def extract_first_name(full_name: str) -> str:
     """Extracts a warm first name or honorific for greetings and signoffs."""
     if not full_name or not full_name.strip():
-        return "Anas"
+        return "there"
     tokens = full_name.strip().split()
     if not tokens:
-        return "Anas"
+        return "there"
     honorifics = {"dr.", "mr.", "mrs.", "ms.", "prof."}
     first_token = tokens[0].lower().rstrip(".") + "."
     if first_token in honorifics and len(tokens) > 1:
@@ -61,7 +61,62 @@ def extract_first_name(full_name: str) -> str:
     # If the token is 'Youranasriaz', resolve to Anas
     if "anas" in tokens[0].lower():
         return "Anas"
+    # If it contains digits (e.g. onlineworkpurpose009, owp360) or looks like a technical handle
+    if any(c.isdigit() for c in tokens[0]) or "@" in tokens[0] or len(tokens[0]) > 14:
+        return "there"
     return tokens[0]
+
+
+def resolve_lead_display_name(
+    lead_name: Optional[str] = None,
+    lead_email: Optional[str] = None,
+    mission: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Resolves a polished, human-friendly display name for a prospect or business.
+
+    Examples:
+    - 'Greenleaf Bistro' -> 'Greenleaf Bistro'
+    - 'Sarah Jenkins (Head of Eng)' -> 'Sarah Jenkins'
+    - 'owp360@gmail.com' (matched with mission lead) -> 'Greenleaf Bistro'
+    - 'sarah.jenkins@gmail.com' -> 'Sarah Jenkins'
+    - 'onlineworkpurpose009@gmail.com' -> 'Client'
+    """
+    # 1. Direct lead_name if it is not generic
+    if lead_name and lead_name.strip():
+        clean = re.sub(r"\(.*?\)", "", lead_name).strip(" -:\t\n()[]")
+        if clean and clean.lower() not in ["team", "lead", "info", "contact", "support", "there"] and "@" not in clean:
+            return clean
+
+    # 2. Lookup in mission leads if mission is provided
+    if mission and lead_email:
+        norm_email = lead_email.strip().lower()
+        for l in mission.get("leads", []):
+            if l.get("email", "").strip().lower() == norm_email:
+                b_name = l.get("business_name")
+                if b_name and b_name.strip():
+                    clean_b = re.sub(r"\(.*?\)", "", b_name).strip(" -:\t\n()[]")
+                    if clean_b and clean_b.lower() not in ["team", "lead", "info", "contact", "support"] and "@" not in clean_b:
+                        return clean_b
+
+    # 3. Check custom company domain from email address
+    if lead_email and "@" in lead_email:
+        local, domain = lead_email.strip().lower().split("@", 1)
+        generic_domains = {
+            "gmail.com", "yahoo.com", "hotmail.com", "outlook.com",
+            "icloud.com", "aol.com", "mail.com", "proton.me", "protonmail.com"
+        }
+        if domain not in generic_domains:
+            domain_name = domain.split(".")[0]
+            if len(domain_name) >= 3:
+                return domain_name.capitalize()
+
+        # Clean local part if it contains real words without digits
+        parts = re.split(r"[._\-+]+", local)
+        word_parts = [p.capitalize() for p in parts if p.isalpha() and len(p) >= 2]
+        if word_parts and not any(c.isdigit() for c in local) and len(local) < 20:
+            return " ".join(word_parts)
+
+    return "Client"
 
 
 def extract_prospect_greeting_name(lead_name: Optional[str], email: Optional[str] = None) -> str:

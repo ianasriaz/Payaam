@@ -88,10 +88,8 @@ class EmailService:
         sender_addr = from_email or (custom_smtp.get("username") if custom_smtp else None) or self.default_from
         sender_display = f'"{from_name}" <{sender_addr}>'
 
-        # Embed thread reference in subject if provided and not already present
-        final_subject = subject
-        if thread_ref and thread_ref not in subject:
-            final_subject = f"[{thread_ref}] {subject}"
+        # Ensure clean, focused subject line without forced robotic bracket prefixes
+        final_subject = subject.strip()
 
         # Construct MIME message
         msg = MIMEMultipart("alternative")
@@ -99,6 +97,9 @@ class EmailService:
         msg["To"] = to_email
         msg["Subject"] = final_subject
         msg["Date"] = formatdate(localtime=True)
+
+        if thread_ref:
+            msg["X-Payaam-Thread-Ref"] = thread_ref
 
         msg_id = make_msgid(domain="payaam.ai")
         msg["Message-ID"] = msg_id
@@ -263,11 +264,12 @@ class EmailService:
 
             body_text = body_text.strip()
 
-            # Extract Thread / Job Ref from Subject (e.g. [PYM-1024] or PYM-ABCDEF-Lead)
-            thread_ref = None
-            match = re.search(r"\[((?:PYM|WD)-[A-Za-z0-9\-]+)\]", subject) or re.search(r"\b((?:PYM|WD)-[A-Za-z0-9\-]+)\b", subject)
-            if match:
-                thread_ref = match.group(1)
+            # Extract Thread / Job Ref from custom header or Subject
+            thread_ref = msg.get("X-Payaam-Thread-Ref") or None
+            if not thread_ref:
+                match = re.search(r"\[((?:PYM|WD)-[A-Za-z0-9\-]+)\]", subject) or re.search(r"\b((?:PYM|WD)-[A-Za-z0-9\-]+)\b", subject)
+                if match:
+                    thread_ref = match.group(1)
 
             return InboundEmail(
                 message_id=message_id,

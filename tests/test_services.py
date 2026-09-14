@@ -31,7 +31,7 @@ def test_email_service_dispatch_dry_run():
         thread_ref="PYM-9021",
     )
     assert res["success"] is True
-    assert "[PYM-9021]" in res["subject"]
+    assert res["subject"] == "Testing Payaam Dispatch"
     assert "test@business.com" in res["to"]
 
 

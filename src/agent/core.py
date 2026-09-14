@@ -18,6 +18,7 @@ from src.agent.copywriting import (
     build_user_email_footer,
     clean_user_name,
     extract_first_name,
+    resolve_lead_display_name,
 )
 from src.agent.tools.onboarding import (
     handle_onboarding_or_greeting_tool,
@@ -239,9 +240,18 @@ class PayaamAgent:
         user_profile = dynamodb_service.get_user(sender) or {"name": user_name, "email": sender}
         footer = build_user_email_footer(user_profile)
 
+        # Format clean, engaging subject
+        if dispatch_res.dispatched_count == 1 and dispatch_res.dispatched_leads:
+            lead_disp = resolve_lead_display_name(None, dispatch_res.dispatched_leads[0])
+            receipt_subject = f"🚀 Outreach launched to {lead_disp}"
+        elif dispatch_res.dispatched_count > 0:
+            receipt_subject = f"🚀 Outreach launched ({dispatch_res.dispatched_count} prospects)"
+        else:
+            receipt_subject = "🚀 Outreach mission processed"
+
         email_service.send_email(
             to_email=sender,
-            subject=f"🚀 Payaam Mission Launched: {dispatch_res.mission_id}",
+            subject=receipt_subject,
             body_text=(
                 f"Hey {user_first},\n\n"
                 f"{dispatch_res.summary_message}\n\n"

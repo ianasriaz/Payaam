@@ -82,7 +82,7 @@ async def handle_onboarding_or_greeting_tool(input_data: OnboardingInput) -> Onb
                 pin = user.get("deletion_pin", "UNKNOWN")
                 return OnboardingResult(
                     action_type="DELETION_CONFIRMATION_REQUIRED",
-                    response_subject="⚠️ Action Required: Confirm Profile & Data Deletion",
+                    response_subject="⚠️ Action required: Confirm permanent data deletion",
                     response_body=(
                         f"Hello {user.get('name', 'there')},\n\n"
                         "You requested to permanently delete your Payaam profile, credentials, and mission history.\n\n"
@@ -103,7 +103,7 @@ async def handle_onboarding_or_greeting_tool(input_data: OnboardingInput) -> Onb
         if purge_result.get("success"):
             return OnboardingResult(
                 action_type="DATA_DELETED",
-                response_subject="✅ Payaam Data Deleted: Right-to-be-Forgotten Complete",
+                response_subject="Data permanently deleted (Right-to-be-Forgotten)",
                 response_body=(
                     f"Hello,\n\n"
                     f"All your data under {norm_email} has been permanently purged from Payaam:\n"
@@ -152,7 +152,7 @@ async def handle_onboarding_or_greeting_tool(input_data: OnboardingInput) -> Onb
 
             return OnboardingResult(
                 action_type="SMTP_CONNECTED",
-                response_subject="✅ Custom SMTP Connected Successfully",
+                response_subject="✅ Connected: Sending outreach from your personal email",
                 response_body=(
                     f"Hello {user.get('name')},\n\n"
                     f"Your custom sender email has been securely connected:\n"
@@ -225,7 +225,7 @@ async def handle_onboarding_or_greeting_tool(input_data: OnboardingInput) -> Onb
 
         return OnboardingResult(
             action_type="PROFILE_SAVED",
-            response_subject="✅ Payaam Profile & Company Knowledge Base Initialized!",
+            response_subject="✅ Your memory vault & company profile are ready",
             response_body=(
                 f"Welcome aboard, {saved_user.get('name')}! 🚀\n\n"
                 "I have initialized your Memory Vault:\n"
@@ -265,7 +265,7 @@ async def handle_onboarding_or_greeting_tool(input_data: OnboardingInput) -> Onb
 
         return OnboardingResult(
             action_type="GREETING",
-            response_subject="👋 Welcome to Payaam - Your Background Autonomous Email Agent",
+            response_subject="👋 Welcome to Payaam — your autonomous email delegate",
             response_body=(
                 f"Hello {user_first}!\n\n"
                 "I am Payaam (پیام), an autonomous AI agent that handles repetitive email outreach, "

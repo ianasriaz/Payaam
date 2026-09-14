@@ -17,6 +17,7 @@ from src.agent.copywriting import (
     clean_user_name,
     extract_first_name,
     extract_prospect_greeting_name,
+    resolve_lead_display_name,
     sanitize_email_copy,
     sanitize_subject_line,
 )
@@ -214,10 +215,13 @@ Copywriting Rules:
             mission.pop("pending_draft", None)
             dynamodb_service.save_mission(mission)
 
+            # Resolve clean display name for target client
+            target_display = resolve_lead_display_name(target_lead.get("business_name"), target_client, mission)
+
             return InboundTriageResult(
                 intent_category="USER_REFINEMENT",
                 should_surface_to_user=True,
-                user_notification_subject="✅ Client Response Dispatched",
+                user_notification_subject=f"✅ Sent: Your reply to {target_display} has been dispatched",
                 user_notification_body=(
                     f"Your instructions were polished and dispatched to {target_client}:\n\n"
                     f"----------------------------------------\n"
@@ -240,6 +244,7 @@ Copywriting Rules:
             {},
         )
     prospect_greeting = extract_prospect_greeting_name(matching_lead.get("business_name"), from_addr)
+    prospect_display = resolve_lead_display_name(matching_lead.get("business_name"), from_addr, mission)
 
     classification = await _classify_lead_reply(
         body=input_data.body_text,
@@ -345,7 +350,7 @@ Copywriting Rules:
             mission["status"] = "ACTION_NEEDED_AWAITING_USER"
             dynamodb_service.save_mission(mission)
 
-        action_subject = f"🔥 Payaam Action Needed: {from_addr} Replied"
+        action_subject = f"Action needed: {prospect_display} replied to your outreach"
         action_body = (
             f"Hey {user_first_name},\n\n"
             f"Prospect {from_addr} replied to your outreach:\n"
@@ -366,7 +371,7 @@ Copywriting Rules:
         )
 
     # 5. Result Achieved (Two-Knock Knock #2)
-    result_subject = f"🎉 Payaam Deal Signal / Meeting Ready: {from_addr}"
+    result_subject = f"🎉 Meeting ready: {prospect_display} wants to connect!"
     result_body = (
         f"Hey {user_first_name}!\n\n"
         f"Great news! Prospect {from_addr} sent a positive signal or agreed to connect:\n"

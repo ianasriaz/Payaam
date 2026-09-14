@@ -224,7 +224,7 @@ async def test_company_profile_attachment_ingestion_and_user_footer():
 
     assert res.action_type == "PROFILE_SAVED"
     assert res.user_profile is not None
-    assert "Company Knowledge Base" in res.response_subject or "Profile" in res.response_subject
+    assert any(k in res.response_subject.lower() for k in ["memory vault", "company", "profile"])
     assert "DELETE MY DATA" in res.response_body
     assert "Payaam User Privacy & Email Controls" in res.response_body
     assert res.user_profile.get("company_profile") is not None
