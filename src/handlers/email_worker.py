@@ -22,21 +22,20 @@ logger = logging.getLogger("payaam.handlers.worker")
 
 
 class EmailWorker:
-    """IMAP background polling worker."""
+    """High-frequency, low-latency IMAP background polling worker."""
 
-    def __init__(self, poll_interval_seconds: int = 15) -> None:
+    def __init__(self, poll_interval_seconds: int = 3) -> None:
         self.poll_interval = poll_interval_seconds
         self.is_running = False
 
     async def run_once(self) -> int:
         """Runs a single poll cycle across the IMAP inbox."""
-        logger.info("Checking Purelymail IMAP for unread messages...")
         unread_emails = email_service.fetch_unread_emails(mark_as_read=True)
         if not unread_emails:
-            logger.info("Inbox check complete: 0 unread messages.")
+            logger.debug("Inbox check complete: 0 unread messages.")
             return 0
 
-        logger.info(f"Processing {len(unread_emails)} unread message(s)...")
+        logger.info(f"🚀 Detected {len(unread_emails)} unread message(s)! Processing immediately...")
         for em in unread_emails:
             try:
                 result = await payaam_agent.process_inbound_email(em)
@@ -47,13 +46,17 @@ class EmailWorker:
         return len(unread_emails)
 
     async def start(self) -> None:
-        """Starts the infinite background polling loop."""
+        """Starts the high-frequency polling loop."""
         self.is_running = True
-        logger.info(f"Payaam Email Worker started (Poll interval: {self.poll_interval}s)")
+        logger.info(f"⚡ Payaam Ultra-Fast Email Worker started (Poll interval: {self.poll_interval}s)")
 
         while self.is_running:
             try:
-                await self.run_once()
+                count = await self.run_once()
+                if count > 0:
+                    # Adaptive fast-loop: check again immediately if messages were just processed
+                    await asyncio.sleep(0.5)
+                    continue
             except Exception as exc:
                 logger.error(f"Unexpected worker poll error: {exc}", exc_info=True)
 

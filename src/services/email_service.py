@@ -54,6 +54,8 @@ class EmailService:
         self.default_user = settings.PURELYMAIL_USER
         self.default_password = settings.PURELYMAIL_PASSWORD
         self.default_from = settings.PURELYMAIL_DEFAULT_FROM
+        self._cached_imap: Optional[imaplib.IMAP4_SSL] = None
+        self._cached_imap_key: Optional[str] = None
 
     # -------------------------------------------------------------------------
     # Outbound SMTP Dispatch
@@ -165,6 +167,35 @@ class EmailService:
     # -------------------------------------------------------------------------
     # Inbound IMAP Polling & MIME Parsing
     # -------------------------------------------------------------------------
+    def _get_imap_connection(self, host: str, port: int, user: str, password: str) -> imaplib.IMAP4_SSL:
+        """Retrieves an active IMAP connection, reusing the cached TLS session if live."""
+        key = f"{host}:{port}:{user}"
+        if self._cached_imap is not None and self._cached_imap_key == key:
+            try:
+                # Fast noop check (takes ~20-40ms vs ~800ms for fresh TLS handshake + login)
+                status, _ = self._cached_imap.noop()
+                if status == "OK":
+                    return self._cached_imap
+            except Exception:
+                self.close_cached_connections()
+
+        # Connect & login
+        mail = imaplib.IMAP4_SSL(host, port, timeout=10)
+        mail.login(user, password)
+        self._cached_imap = mail
+        self._cached_imap_key = key
+        return mail
+
+    def close_cached_connections(self) -> None:
+        """Cleanly terminates and purges any active IMAP TLS sessions."""
+        if self._cached_imap is not None:
+            try:
+                self._cached_imap.logout()
+            except Exception:
+                pass
+            self._cached_imap = None
+            self._cached_imap_key = None
+
     def fetch_unread_emails(
         self,
         custom_imap: Optional[Dict[str, Any]] = None,
@@ -184,32 +215,33 @@ class EmailService:
         emails: List[InboundEmail] = []
 
         try:
-            with imaplib.IMAP4_SSL(host, port) as mail:
-                mail.login(user, password)
-                mail.select("INBOX")
+            mail = self._get_imap_connection(host, port, user, password)
+            mail.select("INBOX")
 
-                status, messages = mail.search(None, "UNSEEN")
-                if status != "OK":
-                    return []
+            status, messages = mail.search(None, "UNSEEN")
+            if status != "OK":
+                return []
 
-                msg_ids = messages[0].split()
+            msg_ids = messages[0].split()
+            if msg_ids:
                 logger.info(f"Found {len(msg_ids)} unread email(s) in IMAP inbox.")
 
-                for msg_id in msg_ids:
-                    res, data = mail.fetch(msg_id, "(RFC822)")
-                    if res != "OK" or not data or not data[0]:
-                        continue
+            for msg_id in msg_ids:
+                res, data = mail.fetch(msg_id, "(RFC822)")
+                if res != "OK" or not data or not data[0]:
+                    continue
 
-                    raw_email = data[0][1]
-                    parsed = self.parse_rfc822(raw_email)
-                    if parsed:
-                        emails.append(parsed)
+                raw_email = data[0][1]
+                parsed = self.parse_rfc822(raw_email)
+                if parsed:
+                    emails.append(parsed)
 
-                    if mark_as_read:
-                        mail.store(msg_id, "+FLAGS", "\\Seen")
+                if mark_as_read:
+                    mail.store(msg_id, "+FLAGS", "\\Seen")
 
         except Exception as exc:
             logger.error(f"Error fetching unread emails from IMAP: {exc}")
+            self.close_cached_connections()
 
         return emails
 
