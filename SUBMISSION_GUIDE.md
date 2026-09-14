@@ -68,8 +68,8 @@ Skilled solo professionals and agencies spend 10+ hours every week acting as man
 - **Live Agent Email (Pure Zero-UI Experience):**
   - Email: `agent@anasriaz.com` *(Judges can send a blank "Hi" email or attach a company profile PDF right from their inbox!)*
 - **Live AWS Cloud Host:**
-  - Public IP: `54.234.185.136`
-  - Health API: [http://54.234.185.136:8000/api/health](http://54.234.185.136:8000/api/health)
-- **Pytest Suite:** 20/20 automated unit and integration tests passing (`pytest`).
+  - Public IP: `54.227.185.249`
+  - Health API: [http://54.227.185.249:8000/api/health](http://54.227.185.249:8000/api/health)
+- **Pytest Suite:** 22/22 automated unit and integration tests passing (`pytest`).
 - **End-to-End Simulation:** Automated 10-scenario simulation script (`python -m scripts.simulate_email_flow`) successfully exercising the entire lifecycle from cold-start greeting to cryptographic data wipe.
 - **Live SMTP/IMAP Connectivity:** Verified live authentication with Purelymail SMTP (Port 465) and IMAP (Port 993).
