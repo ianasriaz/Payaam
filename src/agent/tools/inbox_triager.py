@@ -72,6 +72,7 @@ Categories:
 3. "RESOLVE_SILENTLY": Inquiring about portfolio, past samples, services, packages, FAQs, contact info, or office address that are answered in the Company Knowledge Base.
 4. "ACTION_NEEDED": Pricing negotiation (budget counters), custom requirements, asking for discounts outside standard packages, or scope changes.
 5. "RESULT_ACHIEVED": Explicitly agreed to a meeting time, ready to hire/sign, or confirmed price/deal.
+6. "BECOME_USER": The prospect is expressing interest in using, signing up for, or deploying the AI agent (Payaam) for their own business or outreach (e.g. 'Can I use this agent for my business?', 'How does this agent work? Can I sign up?', 'Who built this? I want to use it', 'Can you pitch my clients?').
 
 Copywriting Guidelines for "suggested_reply":
 - TONE: Natural, direct, conversational human peer. Sound like an experienced builder or freelancer writing a quick email from a laptop. 2 to 4 sentences maximum.
@@ -113,6 +114,8 @@ Output valid JSON:
         return {"category": "IGNORE_AUTO", "summary": "Auto-responder / bounce", "suggested_reply": ""}
     if any(w in body_lower for w in ["not interested", "unsubscribe", "remove me", "stop"]):
         return {"category": "OPT_OUT", "summary": "Prospect opted out", "suggested_reply": ""}
+    if any(w in body_lower for w in ["use this agent", "sign up", "who are you", "who built this", "use payaam", "how does this agent", "pitch my clients"]):
+        return {"category": "BECOME_USER", "summary": "Prospect wants to use the agent for their own business", "suggested_reply": ""}
     if any(w in body_lower for w in ["call", "meeting", "zoom", "thursday", "friday", "tomorrow", "sounds good"]):
         return {
             "category": "RESULT_ACHIEVED",
@@ -263,6 +266,49 @@ Copywriting Rules:
         return InboundTriageResult(
             intent_category="OPT_OUT",
             should_surface_to_user=False,
+        )
+
+    # 2b. Lead Wants to Use the Agent (Auto-Conversion to Independent User)
+    if cat == "BECOME_USER":
+        logger.info(f"Prospect {from_addr} wants to use Payaam! Converting to independent user silently.")
+        if mission:
+            mission["status"] = "PROSPECT_OPT_OUT"
+            dynamodb_service.save_mission(mission)
+
+        # Ensure user account exists in DynamoDB for from_addr
+        lead_user = dynamodb_service.get_user(from_addr)
+        if not lead_user:
+            lead_user = dynamodb_service.save_user({
+                "email": from_addr,
+                "name": clean_user_name(None, from_addr),
+            })
+
+        user_pin = lead_user.get("deletion_pin", "PYM-XXXX")
+        user_first = extract_first_name(lead_user.get("name", "there"))
+        welcome_subject = "👋 Welcome to Payaam - Start Your Autonomous Outreach"
+        welcome_body = (
+            f"Hello {user_first}!\n\n"
+            "We noticed you'd like to use Payaam (پیام) for your own business! 🚀\n\n"
+            "I am an autonomous background email delegate designed to handle repetitive cold outreach, "
+            "client follow-ups, and lead sourcing silently from your inbox.\n\n"
+            "💡 How to Get Started:\n"
+            "Simply reply to this email with:\n"
+            "1. Your Services & Portfolio (or attach your company profile PDF/brochure)\n"
+            "2. (Or just reply with target email addresses and what you'd like me to pitch!)\n\n"
+            f"Your Data Deletion PIN is: {user_pin}"
+            f"{build_user_email_footer(lead_user)}"
+        )
+        email_service.send_email(
+            to_email=from_addr,
+            subject=welcome_subject,
+            body_text=welcome_body,
+            in_reply_to=input_data.in_reply_to,
+        )
+        return InboundTriageResult(
+            intent_category="BECOME_USER",
+            should_surface_to_user=False,
+            client_reply_dispatched=True,
+            client_reply_body=welcome_body,
         )
 
     # 3. Silent Vault Resolution (Answers routine inquiries directly from Company KB)

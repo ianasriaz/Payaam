@@ -239,12 +239,31 @@ class DynamoDBService:
         if not norm_ref and not norm_sender:
             return None
 
+        # Active statuses that can receive replies
+        ACTIVE_STATUSES = {"OUTREACH_DISPATCHED", "ACTION_NEEDED_AWAITING_USER", "CLIENT_REPLY_SENT"}
+
+        def _is_active_match(mission: Dict[str, Any]) -> bool:
+            m_id = mission.get("mission_id", "")
+            m_status = mission.get("status", "")
+
+            # Exact thread_ref match
+            if norm_ref and (norm_ref in mission.get("thread_refs", []) or m_id == norm_ref or (m_id and m_id in norm_ref)):
+                return True
+
+            # If matching by sender email, only match actively running missions
+            if norm_sender:
+                if m_status in ACTIVE_STATUSES:
+                    # Lead reply match
+                    if any(l.get("email", "").lower() == norm_sender for l in mission.get("leads", [])):
+                        return True
+                    # User Action Card response match
+                    if mission.get("user_email", "").lower() == norm_sender and m_status == "ACTION_NEEDED_AWAITING_USER":
+                        return True
+            return False
+
         # Check memory first
         for mission in self._mem_missions.values():
-            m_id = mission.get("mission_id", "")
-            if norm_ref and (norm_ref in mission.get("thread_refs", []) or m_id == norm_ref or (m_id and m_id in norm_ref)):
-                return mission
-            if norm_sender and any(l.get("email", "").lower() == norm_sender for l in mission.get("leads", [])):
+            if _is_active_match(mission):
                 return mission
 
         if self.resource and self.missions_table_name not in self._table_missing:
@@ -253,10 +272,7 @@ class DynamoDBService:
                 resp = table.scan()
                 for item in resp.get("Items", []):
                     m = _decimals_to_floats(item)
-                    m_id = m.get("mission_id", "")
-                    if norm_ref and (norm_ref in m.get("thread_refs", []) or m_id == norm_ref or (m_id and m_id in norm_ref)):
-                        return m
-                    if norm_sender and any(l.get("email", "").lower() == norm_sender for l in m.get("leads", [])):
+                    if _is_active_match(m):
                         return m
             except Exception as exc:
                 if "ResourceNotFoundException" in str(exc):

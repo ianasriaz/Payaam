@@ -6,6 +6,7 @@ Two-Knock surfacing, and Right-to-be-Forgotten data management.
 """
 
 import logging
+import re
 from typing import Any, Dict, Optional
 import boto3
 from strands import Agent
@@ -131,9 +132,35 @@ class PayaamAgent:
         # ---------------------------------------------------------------------
         # Step 2: Check If Correlated with an Active Mission (Two-Knock Policy)
         # ---------------------------------------------------------------------
-        is_reply = subject.strip().lower().startswith("re:") or bool(email_data.in_reply_to) or bool(email_data.references)
+        # Disambiguate User/Boss Intent from Passive Lead Replies:
+        # If the sender is submitting candidate leads to pitch, setting up a profile,
+        # asking exploratory questions about the agent, or sending a fresh unthreaded email,
+        # they are acting as a User/Sender for their own business—never a lead for someone else.
+        body_clean = re.sub(re.escape(sender), "", body, flags=re.IGNORECASE)
+        other_emails = re.findall(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", body_clean)
+        other_emails = [e for e in other_emails if e.lower() not in ["agent@anasriaz.com", "payaam@anasriaz.com"]]
+
+        has_new_mission_leads = len(other_emails) > 0
+        has_setup_keywords = any(kw in f"{subject}\n{body}".lower() for kw in [
+            "setup:", "my profile", "portfolio:", "my rates", "my services", "rates:", "company profile:",
+            "pricing:", "packages:", "services:"
+        ]) or bool(email_data.attachments)
+
+        has_user_exploration = any(re.search(pat, f"{subject}\n{body}", re.IGNORECASE) for pat in [
+            r"\bwhat\s+can\s+you\s+do\b",
+            r"\bwho\s+are\s+you\b",
+            r"\bhow\s+(?:does\s+this|to)\s+work\b",
+            r"\bcan\s+i\s+use\s+(?:this|you|payaam|agent)\b",
+            r"\bsign\s*up\b",
+            r"\bhow\s+do\s+i\s+(?:get\s+started|use)\b",
+        ])
+        is_fresh_greeting = (subject.strip().lower() in ["hi", "hello", "hey", "help", "start", "greetings"]) and not bool(thread_ref) and not subject.strip().lower().startswith("re:")
+
+        has_user_intent = has_new_mission_leads or has_setup_keywords or has_user_exploration or is_fresh_greeting
+
+        is_reply = (subject.strip().lower().startswith("re:") or bool(email_data.in_reply_to) or bool(email_data.references)) and not has_user_intent
         correlated_mission = None
-        if thread_ref:
+        if thread_ref and not has_user_intent:
             correlated_mission = dynamodb_service.find_mission_by_thread(thread_ref)
         elif is_reply:
             correlated_mission = dynamodb_service.find_mission_by_thread("", sender_email=sender)

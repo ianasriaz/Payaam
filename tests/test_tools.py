@@ -242,3 +242,86 @@ async def test_company_profile_attachment_ingestion_and_user_footer():
     assert "DELETE MY DATA PYM-5678" in footer_with_smtp
 
 
+@pytest.mark.asyncio
+async def test_lead_converts_to_independent_user_when_inquiring_about_agent():
+    from src.agent.tools.inbox_triager import triage_inbound_email_tool, InboundTriageInput
+    from src.services.dynamodb import dynamodb_service
+
+    # Setup mission where b@gmail.com pitches a@gmail.com
+    test_mission = {
+        "mission_id": "PYM-DUALROLE-TEST",
+        "user_email": "b_sender@gmail.com",
+        "status": "OUTREACH_DISPATCHED",
+        "leads": [{"email": "a_lead@gmail.com", "business_name": "A Corp"}],
+        "thread_refs": ["PYM-DUALROLE-TEST-ACorp"],
+    }
+    dynamodb_service.save_mission(test_mission)
+
+    # a_lead replies asking how to use the agent for their own business
+    triage_res = await triage_inbound_email_tool(
+        InboundTriageInput(
+            from_email="a_lead@gmail.com",
+            subject="Re: [PYM-DUALROLE-TEST-ACorp] Quick question",
+            body_text="I am not interested in your services, but how do I sign up for this AI agent? Can it pitch my clients?",
+            thread_ref="PYM-DUALROLE-TEST-ACorp",
+        )
+    )
+
+    # Must NOT alert b_sender
+    assert triage_res.should_surface_to_user is False
+    assert triage_res.intent_category == "BECOME_USER"
+    assert triage_res.client_reply_dispatched is True
+    assert "Payaam" in (triage_res.client_reply_body or "")
+
+    # a_lead must now exist in DynamoDB as an independent user
+    lead_user = dynamodb_service.get_user("a_lead@gmail.com")
+    assert lead_user is not None
+    assert lead_user.get("deletion_pin") is not None
+
+
+@pytest.mark.asyncio
+async def test_lead_sends_user_command_or_new_mission_not_routed_to_prior_sender():
+    from src.agent.core import payaam_agent
+    from src.services.email_service import InboundEmail
+    from src.services.dynamodb import dynamodb_service
+
+    # Setup mission where b@gmail.com previously pitched a@gmail.com
+    test_mission = {
+        "mission_id": "PYM-PRIOR-MISSION",
+        "user_email": "b_sender@gmail.com",
+        "status": "OUTREACH_DISPATCHED",
+        "leads": [{"email": "a_lead@gmail.com", "business_name": "A Corp"}],
+        "thread_refs": ["PYM-PRIOR-MISSION-ACorp"],
+    }
+    dynamodb_service.save_mission(test_mission)
+
+    # Case 1: a_lead sends a fresh greeting ("Hi")
+    em_greet = InboundEmail(
+        message_id="<msg-user-test-1@client.com>",
+        subject="Hi",
+        from_address="a_lead@gmail.com",
+        from_name="A Lead",
+        to_address="agent@anasriaz.com",
+        date="Mon, 14 Sep 2026 10:00:00 +0000",
+        body_text="Hi, what can you do for my business?",
+    )
+    res_greet = await payaam_agent.process_inbound_email(em_greet)
+    assert res_greet["route"] == "ONBOARDING"
+    assert res_greet["action"] == "GREETING"
+
+    # Case 2: a_lead sends their own outreach instructions with target leads
+    em_mission = InboundEmail(
+        message_id="<msg-user-test-2@client.com>",
+        subject="Pitch these partners",
+        from_address="a_lead@gmail.com",
+        from_name="A Lead",
+        to_address="agent@anasriaz.com",
+        date="Mon, 14 Sep 2026 10:05:00 +0000",
+        body_text="Please pitch these candidate agencies: client1@agency.com, client2@agency.com",
+    )
+    res_mission = await payaam_agent.process_inbound_email(em_mission)
+    assert res_mission["route"] == "NEW_MISSION_DISPATCHED"
+    assert res_mission["dispatched_count"] >= 1
+
+
+
