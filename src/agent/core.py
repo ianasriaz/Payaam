@@ -175,6 +175,14 @@ Write a helpful, direct response to this user. Do NOT include the privacy footer
 
         self.logger.info(f"Processing inbound email from {sender} | Subj: {subject} | Ref: {thread_ref}")
 
+        # Guard: Immediately drop any system, bounce, or self-addressed emails
+        sender_clean = (sender or "").strip().lower()
+        if any(re.search(pat, sender_clean) for pat in [
+            r"^noreply@", r"^no-reply@", r"^mailer-daemon@", r"^postmaster@", r"^bounce@", r"^bounces@", r"@purelymail\.com$"
+        ]) or sender_clean in ["agent@anasriaz.com", "payaam@anasriaz.com"]:
+            self.logger.info(f"Dropping automated bounce/system email from {sender}")
+            return {"route": "DROPPED_BOUNCE", "response_sent": False}
+
         # ---------------------------------------------------------------------
         # Step 1: Universal Admin Commands (Right-to-be-Forgotten or BYO-SMTP)
         # ---------------------------------------------------------------------

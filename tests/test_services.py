@@ -99,3 +99,50 @@ def test_multi_tenant_collision_detection():
     col2 = dynamodb_service.check_collision(target, category="web_design")
     assert col2["has_collision"] is True
     assert col2["target_email"] == target
+
+
+def test_bounce_detection_and_dispatch_blocking():
+    import email
+    from src.services.email_service import is_system_bounce_or_automated
+
+    # DSN bounce email sample
+    raw_bounce = b"""From: noreply@purelymail.com
+To: agent@anasriaz.com
+Subject: Delivery issue with anas@anasriaz.com - quick heads up
+Auto-Submitted: auto-replied
+Content-Type: multipart/report; report-type=delivery-status
+
+We could not deliver the attached mail.
+"""
+    msg = email.message_from_bytes(raw_bounce)
+    assert is_system_bounce_or_automated(msg, "noreply@purelymail.com", "Delivery issue with anas@anasriaz.com") is True
+
+    # Blocked outbound send to system address
+    res = email_service.send_email(
+        to_email="noreply@purelymail.com",
+        subject="Hello",
+        body_text="Test",
+        dry_run=False,
+    )
+    assert res["success"] is False
+    assert "Blocked" in res["error"]
+
+
+@pytest.mark.asyncio
+async def test_process_inbound_drops_bounce():
+    from src.agent.core import payaam_agent
+    from src.services.email_service import InboundEmail
+
+    inbound_bounce = InboundEmail(
+        message_id="<bounce-123@purelymail.com>",
+        subject="Undelivered Mail Returned to Sender",
+        from_address="noreply@purelymail.com",
+        from_name="Purelymail System",
+        to_address="agent@anasriaz.com",
+        date="Mon, 14 Sep 2026 20:00:00 +0000",
+        body_text="Delivery failed: 550 User not found",
+    )
+    res = await payaam_agent.process_inbound_email(inbound_bounce)
+    assert res["route"] == "DROPPED_BOUNCE"
+    assert res["response_sent"] is False
+

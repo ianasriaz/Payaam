@@ -20,6 +20,56 @@ from src.config import settings
 
 logger = logging.getLogger("payaam.services.email")
 
+SYSTEM_AND_BOUNCE_PATTERNS = [
+    r"^noreply@",
+    r"^no-reply@",
+    r"^mailer-daemon@",
+    r"^postmaster@",
+    r"^bounce@",
+    r"^bounces@",
+    r"^notification.*@",
+    r"@purelymail\.com$",
+    r"@payaam\.ai$",
+]
+
+BOUNCE_SUBJECT_PATTERNS = [
+    r"delivery\s+(?:status\s+notification|failure|issue)",
+    r"undeliver(?:ed|able)\s+mail",
+    r"mail\s+delivery\s+system",
+    r"failure\s+notice",
+    r"couldn't\s+reach",
+    r"we\s+tried\s+reaching\s+you",
+    r"mailbox\s+might\s+be\s+having\s+connection\s+issues",
+]
+
+
+def is_system_bounce_or_automated(msg: email.message.Message, from_addr: str, subject: str) -> bool:
+    """Detects whether an email is a bounce, DSN, NDR, or automated system notification."""
+    clean_from = from_addr.strip().lower()
+    clean_subj = subject.strip().lower()
+
+    # 1. Sender patterns
+    if any(re.search(pat, clean_from) for pat in SYSTEM_AND_BOUNCE_PATTERNS):
+        return True
+
+    # 2. Subject patterns
+    if any(re.search(pat, clean_subj) for pat in BOUNCE_SUBJECT_PATTERNS):
+        return True
+
+    # 3. System headers
+    auto_submitted = (msg.get("Auto-Submitted") or "").strip().lower()
+    if auto_submitted and auto_submitted != "no":
+        return True
+
+    content_type = (msg.get_content_type() or "").strip().lower()
+    if content_type == "multipart/report":
+        return True
+
+    if msg.get("X-Failed-Recipients") or msg.get("X-Pm-Webmail-Alert"):
+        return True
+
+    return False
+
 
 class EmailAttachment(BaseModel):
     """Normalized email attachment payload."""
@@ -47,13 +97,18 @@ class EmailService:
     """Manages SMTP dispatch and IMAP polling with per-user custom credential support."""
 
     def __init__(self) -> None:
-        self.default_smtp_host = settings.PURELYMAIL_SMTP_HOST
-        self.default_smtp_port = settings.PURELYMAIL_SMTP_PORT
+        self.default_smtp_host = settings.SMTP_HOST or settings.PURELYMAIL_SMTP_HOST
+        self.default_smtp_port = settings.SMTP_PORT or settings.PURELYMAIL_SMTP_PORT
+        self.default_smtp_user = settings.SMTP_USER or settings.PURELYMAIL_USER
+        self.default_smtp_password = settings.SMTP_PASSWORD or settings.PURELYMAIL_PASSWORD
+
         self.default_imap_host = settings.PURELYMAIL_IMAP_HOST
         self.default_imap_port = settings.PURELYMAIL_IMAP_PORT
         self.default_user = settings.PURELYMAIL_USER
         self.default_password = settings.PURELYMAIL_PASSWORD
-        self.default_from = settings.PURELYMAIL_DEFAULT_FROM
+
+        self.default_from = settings.PURELYMAIL_DEFAULT_FROM or self.default_smtp_user
+        self.default_reply_to = settings.REPLY_TO_ADDRESS or "agent@anasriaz.com"
         self._cached_imap: Optional[imaplib.IMAP4_SSL] = None
         self._cached_imap_key: Optional[str] = None
 
@@ -73,7 +128,7 @@ class EmailService:
         thread_ref: Optional[str] = None,
         dry_run: bool = False,
     ) -> Dict[str, Any]:
-        """Dispatches an email via SMTP using custom credentials or Purelymail defaults.
+        """Dispatches an email via SMTP using custom credentials or configured defaults.
 
         Args:
             to_email: Recipient email address.
@@ -87,6 +142,16 @@ class EmailService:
             thread_ref: Optional tracking reference (e.g. WD-1024).
             dry_run: If True, simulates send without network connection.
         """
+        to_clean = to_email.strip().lower()
+        # Guard: NEVER dispatch emails to bounce, system, or blacklisted addresses
+        if any(re.search(pat, to_clean) for pat in SYSTEM_AND_BOUNCE_PATTERNS) or to_clean in [self.default_user, "agent@anasriaz.com"]:
+            logger.warning(f"🚫 Blocked dispatch attempt to system/blacklisted address: {to_email}")
+            return {
+                "success": False,
+                "error": f"Blocked sending to blacklisted address: {to_email}",
+                "to": to_email,
+            }
+
         sender_addr = from_email or (custom_smtp.get("username") if custom_smtp else None) or self.default_from
         sender_display = f'"{from_name}" <{sender_addr}>'
 
@@ -97,6 +162,7 @@ class EmailService:
         msg = MIMEMultipart("alternative")
         msg["From"] = sender_display
         msg["To"] = to_email
+        msg["Reply-To"] = self.default_reply_to
         msg["Subject"] = final_subject
         msg["Date"] = formatdate(localtime=True)
 
@@ -122,7 +188,7 @@ class EmailService:
         if body_html:
             msg.attach(MIMEText(body_html, "html", "utf-8"))
 
-        if dry_run or not (self.default_password or (custom_smtp and custom_smtp.get("password"))):
+        if dry_run or not (self.default_smtp_password or (custom_smtp and custom_smtp.get("password"))):
             logger.info(f"[DRY-RUN / MOCK] Dispatched email to {to_email} | Subj: {final_subject} | ID: {msg_id}")
             return {
                 "success": True,
@@ -135,8 +201,8 @@ class EmailService:
         # Resolve SMTP configuration
         host = (custom_smtp.get("host") if custom_smtp else None) or self.default_smtp_host
         port = (custom_smtp.get("port") if custom_smtp else None) or self.default_smtp_port
-        user = (custom_smtp.get("username") if custom_smtp else None) or self.default_user
-        password = (custom_smtp.get("password") if custom_smtp else None) or self.default_password
+        user = (custom_smtp.get("username") if custom_smtp else None) or self.default_smtp_user
+        password = (custom_smtp.get("password") if custom_smtp else None) or self.default_smtp_password
 
         try:
             logger.info(f"Connecting to SMTP {host}:{port} for dispatch to {to_email}")
@@ -154,14 +220,24 @@ class EmailService:
 
             logger.info(f"Email successfully sent to {to_email} with Message-ID: {msg_id}")
             return {"success": True, "message_id": msg_id, "to": to_email, "subject": final_subject}
-        except Exception as exc:
-            logger.warning(f"SMTP network error to {host}:{port} ({exc}). Using simulated dispatch fallback.")
+        except smtplib.SMTPResponseException as exc:
+            err_msg = exc.smtp_error.decode("utf-8", errors="replace") if isinstance(exc.smtp_error, bytes) else str(exc.smtp_error)
+            logger.error(f"SMTP error {exc.smtp_code} dispatching to {to_email} via {host}:{port}: {err_msg}")
             return {
-                "success": True,
+                "success": False,
+                "error": f"SMTP {exc.smtp_code}: {err_msg}",
                 "message_id": msg_id,
                 "to": to_email,
                 "subject": final_subject,
-                "simulated_fallback": True,
+            }
+        except Exception as exc:
+            logger.error(f"SMTP network error dispatching to {to_email} via {host}:{port} ({exc})")
+            return {
+                "success": False,
+                "error": str(exc),
+                "message_id": msg_id,
+                "to": to_email,
+                "subject": final_subject,
             }
 
     # -------------------------------------------------------------------------
@@ -231,13 +307,27 @@ class EmailService:
                 if res != "OK" or not data or not data[0]:
                     continue
 
-                raw_email = data[0][1]
-                parsed = self.parse_rfc822(raw_email)
-                if parsed:
-                    emails.append(parsed)
-
                 if mark_as_read:
                     mail.store(msg_id, "+FLAGS", "\\Seen")
+
+                raw_email = data[0][1]
+                msg = email.message_from_bytes(raw_email)
+                from_header = msg.get("From", "")
+                _, from_address = parseaddr(from_header)
+                subj = msg.get("Subject", "")
+
+                # Detect and silently drop bounce loops, DSNs, and automated system alerts
+                if is_system_bounce_or_automated(msg, from_address, subj):
+                    logger.info(f"🛡️ Filtered out automated bounce/system message from {from_address} (Subj: {subj[:40]})")
+                    continue
+
+                parsed = self.parse_rfc822(raw_email)
+                if parsed:
+                    # Guard: Senders matching the agent itself must never be processed as incoming users
+                    if parsed.from_address in [self.default_user, "agent@anasriaz.com", "payaam@anasriaz.com"]:
+                        logger.info(f"Dropping self-sent loopback message from {parsed.from_address}")
+                        continue
+                    emails.append(parsed)
 
         except Exception as exc:
             logger.error(f"Error fetching unread emails from IMAP: {exc}")

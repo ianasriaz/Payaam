@@ -31,13 +31,20 @@ class Settings(BaseSettings):
     DYNAMODB_TABLE_REGISTRY: str = "Payaam_ContactRegistry"
 
     # Purelymail SMTP / IMAP Configuration
-    PURELYMAIL_SMTP_HOST: str = "smtp.purelymail.com"
+    PURELYMAIL_SMTP_HOST: str = "smtp.gmail.com"
     PURELYMAIL_SMTP_PORT: int = 465
     PURELYMAIL_IMAP_HOST: str = "imap.purelymail.com"
     PURELYMAIL_IMAP_PORT: int = 993
     PURELYMAIL_USER: Optional[str] = None
     PURELYMAIL_PASSWORD: Optional[str] = None
-    PURELYMAIL_DEFAULT_FROM: str = "payaam@yourdomain.com"
+    PURELYMAIL_DEFAULT_FROM: str = "itsanasriaz@gmail.com"
+
+    # Dedicated Outbound SMTP Configuration (e.g. Gmail Relay)
+    SMTP_HOST: Optional[str] = None
+    SMTP_PORT: Optional[int] = None
+    SMTP_USER: Optional[str] = None
+    SMTP_PASSWORD: Optional[str] = None
+    REPLY_TO_ADDRESS: str = "agent@anasriaz.com"
 
     # Security & Encryption (Fernet 32-byte key for encrypting user SMTP passwords at rest)
     APP_ENCRYPTION_KEY: Optional[str] = None

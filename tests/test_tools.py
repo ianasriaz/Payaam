@@ -360,6 +360,9 @@ async def test_lead_sends_user_command_or_new_mission_not_routed_to_prior_sender
     assert res_greet["action"] == "GREETING"
 
     # Case 2: a_lead sends their own outreach instructions with target leads
+    import secrets
+    u1 = f"agency_{secrets.token_hex(4)}@partner.com"
+    u2 = f"agency_{secrets.token_hex(4)}@partner.com"
     em_mission = InboundEmail(
         message_id="<msg-user-test-2@client.com>",
         subject="Pitch these partners",
@@ -367,11 +370,17 @@ async def test_lead_sends_user_command_or_new_mission_not_routed_to_prior_sender
         from_name="A Lead",
         to_address="agent@anasriaz.com",
         date="Mon, 14 Sep 2026 10:05:00 +0000",
-        body_text="Please pitch these candidate agencies: client1@agency.com, client2@agency.com",
+        body_text=f"Please pitch these candidate agencies: {u1}, {u2}",
     )
-    res_mission = await payaam_agent.process_inbound_email(em_mission)
-    assert res_mission["route"] == "NEW_MISSION_DISPATCHED"
-    assert res_mission["dispatched_count"] >= 1
+    from src.services.email_service import email_service
+    orig_send = email_service.send_email
+    email_service.send_email = lambda *args, **kwargs: {"success": True, "message_id": "<mock@payaam.ai>"}
+    try:
+        res_mission = await payaam_agent.process_inbound_email(em_mission)
+        assert res_mission["route"] == "NEW_MISSION_DISPATCHED"
+        assert res_mission["dispatched_count"] >= 1
+    finally:
+        email_service.send_email = orig_send
 
 
 @pytest.mark.asyncio
