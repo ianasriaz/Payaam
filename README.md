@@ -60,9 +60,9 @@ User (Any Email Client) ──> Purelymail IMAP ──> Strands Agent Core (Clau
 ### Live AWS Cloud Deployment
 - **AWS Region**: `us-east-1`
 - **Instance**: `t3.micro` (Amazon Linux 2023)
-- **Public IP**: `18.212.249.70`
+- **Public IP**: `13.221.117.197`
 - **Agent Email Gateway**: `agent@anasriaz.com` (Purelymail IMAP + High-Speed Gmail Relay)
-- **Health Check API**: [http://18.212.249.70:8000/api/health](http://18.212.249.70:8000/api/health)
+- **Health Check API**: [http://13.221.117.197:8000/api/health](http://13.221.117.197:8000/api/health)
 - **Background Daemons**:
   - `payaam-worker.service`: 24/7 Purelymail IMAP listener and Strands Agent loop.
   - `payaam-sandbox.service`: FastAPI Health & Monitoring API on port 8000.
