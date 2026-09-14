@@ -215,47 +215,36 @@ Write a helpful, direct response to this user. Do NOT include the privacy footer
         # ---------------------------------------------------------------------
         # Step 2: Check If Correlated with an Active Mission (Two-Knock Policy)
         # ---------------------------------------------------------------------
-        # Disambiguate User/Boss Intent from Passive Lead Replies:
-        # If the sender is submitting candidate leads to pitch, setting up a profile,
-        # asking exploratory questions about the agent, or sending a fresh unthreaded email,
-        # they are acting as a User/Sender for their own business—never a lead for someone else.
-        body_clean = re.sub(re.escape(sender), "", body, flags=re.IGNORECASE)
-        other_emails = re.findall(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", body_clean)
-        other_emails = [e for e in other_emails if e.lower() not in ["agent@anasriaz.com", "payaam@anasriaz.com"]]
+        active_body = extract_active_reply_text(body)
 
-        has_new_mission_leads = len(other_emails) > 0
-        has_setup_keywords = any(kw in f"{subject}\n{body}".lower() for kw in [
-            "setup:", "my profile", "portfolio:", "my rates", "my services", "rates:", "company profile:",
-            "pricing:", "packages:", "services:"
-        ]) or bool(email_data.attachments)
-
-        has_user_exploration = any(re.search(pat, f"{subject}\n{body}", re.IGNORECASE) for pat in [
-            r"\bwhat\s+can\s+you\s+do\b",
-            r"\bwho\s+are\s+you\b",
-            r"\bhow\s+(?:does\s+this|to)\s+work\b",
-            r"\bcan\s+i\s+use\s+(?:this|you|payaam|agent)\b",
-            r"\bsign\s*up\b",
-            r"\bhow\s+do\s+i\s+(?:get\s+started|use)\b",
-        ])
-        is_fresh_greeting = (subject.strip().lower() in ["hi", "hello", "hey", "help", "start", "greetings"]) and not bool(thread_ref) and not subject.strip().lower().startswith("re:")
-
-        has_user_intent = has_new_mission_leads or has_setup_keywords or has_user_exploration or is_fresh_greeting
-
-        is_reply = (subject.strip().lower().startswith("re:") or bool(email_data.in_reply_to) or bool(email_data.references)) and not has_user_intent
+        # 2a. Check if sender is an active prospect/lead in an ongoing mission
         correlated_mission = None
-        if thread_ref and not has_user_intent:
-            correlated_mission = dynamodb_service.find_mission_by_thread(thread_ref)
-        elif is_reply:
-            correlated_mission = dynamodb_service.find_mission_by_thread("", sender_email=sender)
+        is_lead_reply = False
+
+        lead_mission = dynamodb_service.find_mission_by_thread(thread_ref or "", sender_email=sender)
+        if lead_mission:
+            # Verify if sender is one of the leads on this mission
+            if any(l.get("email", "").strip().lower() == sender_clean for l in lead_mission.get("leads", [])):
+                correlated_mission = lead_mission
+                is_lead_reply = True
+
+        # 2b. If not a lead, check if mission owner is replying to an Action Card
+        if not correlated_mission and thread_ref:
+            user_mission = dynamodb_service.find_mission_by_thread(thread_ref)
+            if user_mission and user_mission.get("user_email", "").strip().lower() == sender_clean:
+                from src.agent.tools.outreach import _extract_leads_from_text
+                new_leads_in_reply = _extract_leads_from_text(active_body)
+                if not new_leads_in_reply:
+                    correlated_mission = user_mission
 
         if correlated_mission:
-            self.logger.info(f"Correlated email with active mission {correlated_mission.get('mission_id')}")
+            self.logger.info(f"Correlated email with active mission {correlated_mission.get('mission_id')} (is_lead={is_lead_reply})")
             triage_res = await triage_inbound_email_tool(
                 InboundTriageInput(
                     from_email=sender,
                     subject=subject,
-                    body_text=body,
-                    thread_ref=thread_ref,
+                    body_text=active_body or body,
+                    thread_ref=thread_ref or (correlated_mission.get("thread_refs", [""])[0] if correlated_mission.get("thread_refs") else None),
                     in_reply_to=email_data.message_id,
                 )
             )
@@ -313,6 +302,36 @@ Write a helpful, direct response to this user. Do NOT include the privacy footer
 
         if candidate_leads:
             self.logger.info(f"Dispatching new mission for user {sender} ({len(candidate_leads)} leads)")
+
+            # Ingest attached documents (e.g. Company Profile PDF/brochures) into user Memory Vault
+            if email_data.attachments:
+                from src.services.bedrock import bedrock_service
+                extracted_doc_text = ""
+                for att in email_data.attachments:
+                    fn = getattr(att, "filename", "") or ""
+                    ext = fn.split(".")[-1].lower() if "." in fn else ""
+                    if ext in ["pdf", "txt", "md", "doc", "docx", "csv", "html"]:
+                        raw_data = getattr(att, "data_bytes", b"")
+                        if raw_data:
+                            self.logger.info(f"Extracting company profile knowledge from mission attachment '{fn}'")
+                            knowledge = await bedrock_service.extract_document_knowledge(
+                                doc_bytes=raw_data,
+                                doc_format=ext,
+                                doc_name=fn,
+                            )
+                            if knowledge:
+                                extracted_doc_text += f"\n\n--- Document Knowledge ({fn}) ---\n{knowledge}"
+                if extracted_doc_text:
+                    user_data = dict(dynamodb_service.get_user(sender) or {})
+                    existing_profile = user_data.get("company_profile", "")
+                    user_data.update({
+                        "email": sender,
+                        "name": clean_user_name(email_data.from_name or user_data.get("name"), sender),
+                        "company_profile": (extracted_doc_text + "\n\n" + existing_profile).strip(),
+                    })
+                    dynamodb_service.save_user(user_data)
+                    self.logger.info(f"Updated user {sender} company profile from mission attachment.")
+
             dispatch_res = await dispatch_outreach_mission_tool(
                 MissionDispatchInput(
                     user_email=sender,
