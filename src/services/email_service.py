@@ -21,6 +21,13 @@ from src.config import settings
 logger = logging.getLogger("payaam.services.email")
 
 
+class EmailAttachment(BaseModel):
+    """Normalized email attachment payload."""
+    filename: str
+    content_type: str
+    data_bytes: bytes
+
+
 class InboundEmail(BaseModel):
     """Normalized inbound email payload extracted from IMAP."""
     message_id: str
@@ -33,6 +40,7 @@ class InboundEmail(BaseModel):
     in_reply_to: Optional[str] = None
     references: Optional[str] = None
     thread_ref: Optional[str] = None  # e.g. PYM-8491 extracted from subject/body
+    attachments: List[EmailAttachment] = Field(default_factory=list)
 
 
 class EmailService:
@@ -225,13 +233,24 @@ class EmailService:
             references = msg.get("References")
             date_str = msg.get("Date", "")
 
-            # Extract Body Text
+            # Extract Body Text and Attachments
             body_text = ""
+            attachments: List[EmailAttachment] = []
             if msg.is_multipart():
                 for part in msg.walk():
                     content_type = part.get_content_type()
                     content_disposition = str(part.get("Content-Disposition", ""))
-                    if content_type == "text/plain" and "attachment" not in content_disposition:
+                    filename = part.get_filename()
+                    if "attachment" in content_disposition or filename:
+                        payload = part.get_payload(decode=True)
+                        if payload:
+                            clean_fn = filename or f"attachment_{len(attachments) + 1}"
+                            attachments.append(EmailAttachment(
+                                filename=clean_fn,
+                                content_type=content_type,
+                                data_bytes=payload,
+                            ))
+                    elif content_type == "text/plain" and not body_text:
                         payload = part.get_payload(decode=True)
                         if payload:
                             charset = part.get_content_charset() or "utf-8"
@@ -244,9 +263,9 @@ class EmailService:
 
             body_text = body_text.strip()
 
-            # Extract Thread / Job / PIN Ref (e.g. PYM-1024 or WD-1024)
+            # Extract Thread / Job Ref from Subject (e.g. [PYM-1024] or PYM-ABCDEF-Lead)
             thread_ref = None
-            match = re.search(r"\b((?:PYM|WD)-[A-Za-z0-9\-]+)\b", subject + " " + body_text)
+            match = re.search(r"\[((?:PYM|WD)-[A-Za-z0-9\-]+)\]", subject) or re.search(r"\b((?:PYM|WD)-[A-Za-z0-9\-]+)\b", subject)
             if match:
                 thread_ref = match.group(1)
 
@@ -261,6 +280,7 @@ class EmailService:
                 in_reply_to=in_reply_to,
                 references=references,
                 thread_ref=thread_ref,
+                attachments=attachments,
             )
         except Exception as exc:
             logger.error(f"Error parsing raw email bytes: {exc}")

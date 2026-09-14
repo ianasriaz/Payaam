@@ -96,5 +96,67 @@ class BedrockService:
             logger.error(f"Bedrock Converse invocation error ({target_model}): {exc}")
             raise
 
+    async def extract_document_knowledge(
+        self,
+        doc_bytes: bytes,
+        doc_format: str,
+        doc_name: str = "company_profile",
+    ) -> str:
+        """Extracts structured company profile knowledge (services, packages, FAQs, address) from a document."""
+        clean_name = re.sub(r"[^A-Za-z0-9_-]", "_", doc_name)[:50] or "document"
+        norm_format = doc_format.lower().lstrip(".")
+        if norm_format in ["markdown", "mdown"]:
+            norm_format = "md"
+        elif norm_format in ["text"]:
+            norm_format = "txt"
+        elif norm_format not in ["pdf", "txt", "md", "csv", "doc", "docx", "html", "xls", "xlsx"]:
+            norm_format = "txt"
+
+        logger.info(f"Extracting knowledge from document '{clean_name}' (format: {norm_format}, size: {len(doc_bytes)} bytes)")
+
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "document": {
+                            "format": norm_format,
+                            "name": clean_name,
+                            "source": {"bytes": doc_bytes},
+                        }
+                    },
+                    {
+                        "text": (
+                            "Extract and summarize the full company profile from this document into a comprehensive, structured Knowledge Base. "
+                            "Include:\n"
+                            "1. Company Overview & Core Services\n"
+                            "2. Packages, Pricing Tiers, and Deliverables\n"
+                            "3. Frequently Asked Questions (FAQs) & Policies\n"
+                            "4. Office Address, Operating Hours, and Contact Information\n\n"
+                            "Format clearly so an AI email agent can consult it to accurately answer client inquiries."
+                        )
+                    },
+                ],
+            }
+        ]
+        try:
+            response = self.client.converse(
+                modelId=self.haiku_model_id,
+                messages=messages,
+                inferenceConfig={"temperature": 0.1, "maxTokens": 2048},
+            )
+            output = response.get("output", {}).get("message", {}).get("content", [])
+            if output and "text" in output[0]:
+                return output[0]["text"]
+            return ""
+        except Exception as exc:
+            logger.error(f"Bedrock document extraction failed: {exc}")
+            # Text fallback if decodeable
+            try:
+                return doc_bytes.decode("utf-8", errors="ignore")
+            except Exception:
+                return ""
+
 
 bedrock_service = BedrockService()
+

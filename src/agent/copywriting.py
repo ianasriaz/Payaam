@@ -190,3 +190,48 @@ def sanitize_email_copy(text: str, user_name: Optional[str] = None) -> str:
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
 
     return cleaned.strip()
+
+
+def build_user_email_footer(user_profile: Optional[Dict[str, Any]] = None) -> str:
+    """Builds a customized, reassuring control footer for user-facing emails."""
+    profile = user_profile or {}
+    pin = profile.get("deletion_pin")
+    if not pin and profile.get("email"):
+        try:
+            from src.services.dynamodb import dynamodb_service
+            db_user = dynamodb_service.get_user(profile["email"])
+            if db_user:
+                pin = db_user.get("deletion_pin")
+        except Exception:
+            pass
+    pin = pin or "PYM-XXXX"
+
+    smtp_cfg = profile.get("smtp_config")
+    custom_addr = smtp_cfg.get("username") if smtp_cfg else None
+
+    lines = [
+        "\n\n─────────────────────────────────────────────",
+        "⚙️ Payaam User Privacy & Email Controls:",
+    ]
+    if custom_addr:
+        lines.append(
+            f"• Custom Email / BYO-SMTP: Connected! Outreach is sent directly from your personal email ({custom_addr}).\n"
+            f"  You can update your SMTP credentials or disconnect at any time."
+        )
+    else:
+        lines.append(
+            "• Custom Email / BYO-SMTP: Currently sending via default agent email (agent@anasriaz.com).\n"
+            "  You can connect your own email at any time by replying:\n"
+            "    CONNECT_SMTP\n"
+            "    Host: mail.purelymail.com (or smtp.gmail.com)\n"
+            "    Port: 465 (or 587)\n"
+            "    Username: your_email@domain.com\n"
+            "    Password: your_app_password"
+        )
+    lines.append(
+        f"• Delete Your Data (Right-to-be-Forgotten): Reply at any time to permanently purge your data:\n"
+        f"    DELETE MY DATA {pin}"
+    )
+    lines.append("─────────────────────────────────────────────")
+    return "\n".join(lines)
+

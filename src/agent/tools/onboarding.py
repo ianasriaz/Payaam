@@ -9,10 +9,15 @@ Enables 100% Zero-UI email lifecycle management:
 
 import logging
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 from strands import tool
-from src.agent.copywriting import clean_user_name, extract_first_name
+from src.agent.copywriting import (
+    build_user_email_footer,
+    clean_user_name,
+    extract_first_name,
+)
+from src.services.bedrock import bedrock_service
 from src.services.crypto import encrypt_secret
 from src.services.dynamodb import dynamodb_service
 
@@ -24,6 +29,7 @@ class OnboardingInput(BaseModel):
     user_name: Optional[str] = Field(default=None, description="Name of the user if identified.")
     email_subject: str = Field(description="Subject line of the user's incoming email.")
     email_body: str = Field(description="Body text of the user's incoming email.")
+    attachments: Optional[List[Any]] = Field(default=None, description="Attached documents if any.")
 
 
 class OnboardingResult(BaseModel):
@@ -34,10 +40,10 @@ class OnboardingResult(BaseModel):
 
 
 @tool
-def handle_onboarding_or_greeting_tool(input_data: OnboardingInput) -> OnboardingResult:
+async def handle_onboarding_or_greeting_tool(input_data: OnboardingInput) -> OnboardingResult:
     """Evaluates whether an incoming email is a blank greeting, profile introduction,
 
-    SMTP connection, or data deletion command, and executes the appropriate lifecycle action.
+    document attachment setup, SMTP connection, or data deletion command, and executes the appropriate lifecycle action.
     """
     body = input_data.email_body.strip()
     subj = input_data.email_subject.strip()
@@ -83,6 +89,7 @@ def handle_onboarding_or_greeting_tool(input_data: OnboardingInput) -> Onboardin
                         "To protect against unauthorized requests, please confirm by replying:\n"
                         f"  DELETE MY DATA {pin}\n\n"
                         "Once received, all your data will be permanently purged immediately."
+                        f"{build_user_email_footer(user)}"
                     ),
                 )
             return OnboardingResult(
@@ -154,6 +161,7 @@ def handle_onboarding_or_greeting_tool(input_data: OnboardingInput) -> Onboardin
                     f"• Password: Encrypted at rest (AES-128 Fernet)\n\n"
                     f"Future outreach missions will now be dispatched directly from your personal address!\n"
                     f"Your Data Deletion PIN is: {saved.get('deletion_pin')}"
+                    f"{build_user_email_footer(saved)}"
                 ),
                 user_profile=saved,
             )
@@ -164,42 +172,74 @@ def handle_onboarding_or_greeting_tool(input_data: OnboardingInput) -> Onboardin
     existing_user = dynamodb_service.get_user(norm_email)
 
     # -------------------------------------------------------------------------
-    # 4. Check for Profile Introduction / Setup
+    # 4. Check for Profile Introduction / Document Attachments / Setup
     # -------------------------------------------------------------------------
+    doc_attachments = []
+    if input_data.attachments:
+        for att in input_data.attachments:
+            fn = getattr(att, "filename", "") or ""
+            ext = fn.split(".")[-1].lower() if "." in fn else ""
+            if ext in ["pdf", "txt", "md", "doc", "docx", "csv", "html"]:
+                doc_attachments.append((att, ext, fn))
+
     has_profile_keywords = any(kw in full_text.lower() for kw in [
         "portfolio", "rate", "services", "setup: my profile", "setup",
-        "pricing", "developer", "designer", "freelance"
-    ])
+        "pricing", "developer", "designer", "freelance", "company", "profile",
+        "packages", "faq", "faqs", "address", "office", "agency"
+    ]) or bool(doc_attachments)
     has_target_leads = bool(re.findall(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", body.replace(norm_email, "")))
 
     if has_profile_keywords and not has_target_leads:
         portfolio_match = re.search(r"(?:https?://[^\s]+|[a-zA-Z0-9\-]+\.[a-zA-Z]{2,}(?:/[^\s]*)?)", body)
         portfolio = portfolio_match.group(0).rstrip(".,;:)>]") if portfolio_match else ""
 
+        # Extract structured knowledge from attached documents via Bedrock
+        extracted_doc_text = ""
+        for att, ext, fn in doc_attachments:
+            raw_data = getattr(att, "data_bytes", b"")
+            if raw_data:
+                logger.info(f"Extracting company profile knowledge from attachment '{fn}'")
+                knowledge = await bedrock_service.extract_document_knowledge(
+                    doc_bytes=raw_data,
+                    doc_format=ext,
+                    doc_name=fn,
+                )
+                if knowledge:
+                    extracted_doc_text += f"\n\n--- Document Knowledge ({fn}) ---\n{knowledge}"
+
         user_data = dict(existing_user or {})
+        existing_profile = user_data.get("company_profile", "")
+        new_profile = (extracted_doc_text + "\n\n" + (body if has_profile_keywords else "")).strip() or existing_profile
+
         user_data.update({
             "email": norm_email,
             "name": clean_user_name(input_data.user_name or user_data.get("name"), norm_email),
             "bio_notes": body,
+            "company_profile": new_profile,
             "portfolio": portfolio or user_data.get("portfolio", ""),
         })
         saved_user = dynamodb_service.save_user(user_data)
         pin = saved_user.get("deletion_pin")
 
+        doc_summary = f"\n• Company Knowledge Base: Extracted from {len(doc_attachments)} document(s)" if doc_attachments else ""
+
         return OnboardingResult(
             action_type="PROFILE_SAVED",
-            response_subject="✅ Payaam Profile Initialized: You're All Set!",
+            response_subject="✅ Payaam Profile & Company Knowledge Base Initialized!",
             response_body=(
                 f"Welcome aboard, {saved_user.get('name')}! 🚀\n\n"
                 "I have initialized your Memory Vault:\n"
                 f"• Account Email: {norm_email}\n"
-                f"• Portfolio Link: {portfolio or 'Not specified'}\n"
+                f"• Portfolio Link: {portfolio or 'Not specified'}{doc_summary}\n"
                 f"• Permanent Data Deletion PIN: {pin}\n\n"
-                "Whenever you find potential clients, job opportunities, or need vendor quotes, just email me with the target emails "
-                "and your rough goal. Payaam will take care of the rest in the background!"
+                "Payaam now has your company profile (services, packages, FAQs, and office details) stored in your private vault. "
+                "Whenever prospects ask routine questions about your offerings or location, I will answer them silently in the background, "
+                "and only surface to your inbox when real budget negotiations or confirmed meetings occur!"
+                f"{build_user_email_footer(saved_user)}"
             ),
             user_profile=saved_user,
         )
+
 
     # -------------------------------------------------------------------------
     # 5. Check for Blank Greeting ("Hi", "Hello", "Hey", "What can you do?")
@@ -240,17 +280,9 @@ def handle_onboarding_or_greeting_tool(input_data: OnboardingInput) -> Onboardin
                 "• Your Name & Services (e.g., 'Anas, Full-Stack & AI Engineer')\n"
                 "• Portfolio Link (e.g., 'https://anasriaz.com')\n"
                 "• Pricing Baseline / Guardrails (e.g., '$200 - $500, min $150')\n"
-                "• (Or just give me a task directly: a list of emails and what to pitch!)\n\n"
-                "🔌 Connect Your Own Email (Optional):\n"
-                "By default, I send via our platform relay. If you prefer me to send directly from your personal inbox, reply with:\n"
-                "  CONNECT_SMTP\n"
-                "  Host: mail.purelymail.com (or smtp.gmail.com)\n"
-                "  Port: 465\n"
-                "  Username: your_email@domain.com\n"
-                "  Password: your_app_password\n\n"
-                "🗑️ Your Data & Privacy (Right-to-be-Forgotten):\n"
-                f"You have 100% control over your data. To permanently purge your profile, credentials, and missions, reply anytime:\n"
-                f"  DELETE MY DATA {deletion_pin}"
+                "• (Or attach your company profile PDF / brochure and Payaam will index it automatically!)\n"
+                "• (Or just give me a task directly: a list of emails and what to pitch!)"
+                f"{build_user_email_footer(existing_user)}"
             ),
             user_profile=existing_user,
         )

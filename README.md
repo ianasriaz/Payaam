@@ -10,21 +10,22 @@
 [![AWS DynamoDB](https://img.shields.io/badge/AWS-Amazon%20DynamoDB-blue.svg)](https://aws.amazon.com/dynamodb/)
 [![Strands Agents](https://img.shields.io/badge/SDK-Strands%20Agents-blueviolet.svg)](https://github.com/strands-agents)
 [![Email: Purelymail](https://img.shields.io/badge/Protocol-Purelymail%20SMTP%2FIMAP-blue.svg)](https://purelymail.com)
-[![Live on AWS](https://img.shields.io/badge/Hosted-AWS%20EC2%20(t3.micro)-success.svg)](http://44.223.28.134:8000)
+[![Live on AWS](https://img.shields.io/badge/Hosted-AWS%20EC2%20(t3.micro)-success.svg)](http://54.242.69.81:8000/api/health)
 
 ---
 
 ## 🌟 Overview
 
-**Payaam** is an autonomous, Zero-UI background email delegate built with the **Strands Agents SDK**, **Amazon Bedrock (Claude 3.5 Sonnet & Claude 3.5 Haiku)**, **Amazon DynamoDB**, and **Purelymail (SMTP/IMAP)**.
+**Payaam** is an autonomous, **100% Zero-UI** background email delegate built with the **Strands Agents SDK**, **Amazon Bedrock (Claude 3.5 Sonnet & Claude 3.5 Haiku)**, **Amazon DynamoDB**, and **Purelymail (SMTP/IMAP)**.
 
-Instead of opening yet another app, dashboard, CRM, or cold email tool, Payaam runs silently in the background of your existing email client (Gmail, Apple Mail, Outlook). You simply email your agent raw instructions, and Payaam takes over:
-- 🎯 **Individualized B2B Pitches**: Crafts bespoke, value-first outreach emails citing your actual portfolio and past projects from your Memory Vault.
+Instead of opening yet another web app, dashboard, CRM, or cold outreach tool, Payaam runs silently in the background of your existing native email client (Gmail, Apple Mail, Outlook). You simply email your agent raw instructions, and Payaam takes over:
+- 🎯 **Individualized B2B Pitches**: Crafts bespoke, value-first outreach emails citing your actual portfolio, services, and past projects from your Memory Vault.
+- 📄 **Multimodal Company Profile & Document Ingestion**: Attach your company profile PDF, brochure, services list, rate card, FAQs, or office location notes. Amazon Bedrock natively ingests and indexes them into your private Memory Vault.
 - 🛡️ **Anti-Spam Collision Shield**: Checks a global DynamoDB registry before sending any pitch to prevent multi-user spam fatigue on the same recipient within 14 days.
-- 🔕 **Two-Knock Policy**: Silently filters auto-responders, vacation notices, and opt-outs. Autonomously answers routine questions (portfolio links, rate card, availability) directly from your Memory Vault without interrupting you.
+- 🔕 **Two-Knock Policy**: Silently filters auto-responders, vacation notices, and opt-outs. Autonomously answers routine questions (services, packages, FAQs, office address, portfolio links) directly from your Company Knowledge Base without interrupting you.
 - 🔥 **Action Cards**: Only surfaces to your inbox when a genuine human decision is required (e.g. budget counter-offer or scope adjustment).
 - ✍️ **1-Line Refinements**: When an Action Card arrives, reply with a quick rough note from your phone (*"Make it $220 and ask for their menu PDF"*); Payaam immediately transforms it into a polished, professional client response.
-- 🔐 **Privacy First & Right-to-be-Forgotten**: Encrypts BYO-SMTP credentials with AES-128 Fernet at rest. Complete data deletion on demand via cryptographic PIN (`DELETE MY DATA PYM-XXXX`).
+- 🔐 **Privacy First & BYO-SMTP Controls**: Every email sent to the user includes a customized footer showing current email relay status (default agent email vs. connected personal SMTP encrypted via AES-128 Fernet) and instant Right-to-be-Forgotten command (`DELETE MY DATA PYM-XXXX`).
 
 ---
 
@@ -33,8 +34,9 @@ Instead of opening yet another app, dashboard, CRM, or cold email tool, Payaam r
 | Hackathon Directive | How Payaam Delivers |
 | :--- | :--- |
 | **"Routine & Repetitive Tasks in Background"** | Handles multi-day cold outreach, follow-ups, and quote chasing without human babysitting. |
-| **"Instead of Another App to Open & Manage"** | **Zero-UI**: Onboarding, profile creation, SMTP connection, mission launch, and account deletion happen 100% over native email. |
+| **"Instead of Another App to Open & Manage"** | **Pure Zero-UI**: Onboarding, profile creation, document ingestion, SMTP connection, mission launch, and account deletion happen 100% over native email. |
 | **"Only Surfaces When There's a Real Decision"** | **Two-Knock Policy**: Filters noise silently; only alerts the user when terms must be approved or a meeting is locked in. |
+| **Multimodal Document Understanding** | Ingests company profile PDFs, brochures, and rate cards using Amazon Bedrock native document processing. |
 | **Multi-Tenant Collision Shield** | Global DynamoDB registry (`Payaam_ContactRegistry`) prevents multiple users from spamming the same business within 14 days. |
 | **Security & Privacy (Right-to-be-Forgotten)** | User SMTP passwords encrypted with AES-128 Fernet at rest. Complete data purge with cryptographic deletion PINs (`DELETE MY DATA PYM-XXXX`). |
 
@@ -47,21 +49,22 @@ User (Any Email Client) ──> Purelymail IMAP ──> Strands Agent Core (Clau
                                                            │
               ┌────────────────────────────────────────────┼────────────────────────────────────────────┐
               ▼                                            ▼                                            ▼
-   [Onboarding & Greeting Tool]                 [Outreach & Dispatch Tool]                   [Two-Knock Inbox Triager]
+   [Onboarding & Document Tool]                 [Outreach & Dispatch Tool]                   [Two-Knock Inbox Triager]
    - Blank greeting guide                       - Pre-flight collision check                 - Silent filter: Auto-reply/OOO
-   - Memory Vault setup                         - 3-sentence B2B pitch copy                  - Silent resolver: Portfolio/Vault
-   - BYO-SMTP AES-128 encryption                - Purelymail SMTP dispatch                   - Knock 1: Action Needed card
-   - PIN-based data deletion                    - State recorded in DynamoDB                 - Knock 2: Result Achieved card
+   - PDF/Doc profile ingestion                  - 3-sentence B2B pitch copy                  - Silent resolver: Packages/FAQs
+   - Memory Vault setup in DynamoDB             - Purelymail SMTP dispatch                   - Knock 1: Action Needed card
+   - BYO-SMTP AES-128 encryption                - State recorded in DynamoDB                 - Knock 2: Result Achieved card
+   - PIN-based data deletion                    - Collision ledger recorded                  - Refinement: 1-line to polished
 ```
 
 ### Live AWS Cloud Deployment
 - **Host**: Amazon Linux 2023 EC2 (`t3.micro`) in **us-east-1**
-- **Public IP**: `44.223.28.134`
-- **Sandbox Web UI**: [http://44.223.28.134:8000](http://44.223.28.134:8000)
-- **Health Check API**: [http://44.223.28.134:8000/api/health](http://44.223.28.134:8000/api/health)
+- **Public IP**: `54.242.69.81`
+- **Live Agent Email**: `agent@anasriaz.com` *(Judges & users can send an email directly to experience the Zero-UI flow!)*
+- **Health Check API**: [http://54.242.69.81:8000/api/health](http://54.242.69.81:8000/api/health)
 - **Background Daemons**:
   - `payaam-worker.service`: 24/7 Purelymail IMAP listener and Strands Agent loop.
-  - `payaam-sandbox.service`: FastAPI Sandbox and Monitoring API on port 8000.
+  - `payaam-sandbox.service`: FastAPI Health & Monitoring API on port 8000.
 
 ---
 
@@ -172,7 +175,7 @@ python -m scripts.simulate_email_flow
 ```bash
 pytest
 ```
-*Result: 17 passed in 17 tests.*
+*Result: 20 passed in 20 tests.*
 
 ---
 

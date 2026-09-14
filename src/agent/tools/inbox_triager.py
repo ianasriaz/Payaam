@@ -13,6 +13,7 @@ from typing import Any, Dict, Optional
 from pydantic import BaseModel, Field
 from strands import tool
 from src.agent.copywriting import (
+    build_user_email_footer,
     clean_user_name,
     extract_first_name,
     extract_prospect_greeting_name,
@@ -49,10 +50,11 @@ async def _classify_lead_reply(
     user_vault: Dict[str, Any],
     prospect_name: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Uses Bedrock Claude 3.5 Haiku to classify intent and draft an authentic human reply."""
+    """Uses Bedrock Claude 3.5 Haiku to classify intent and draft an authentic human reply using the Company Knowledge Base."""
     user_name = clean_user_name(user_vault.get("name"))
     user_first = extract_first_name(user_name)
     portfolio = user_vault.get("portfolio", "https://anasriaz.com")
+    company_kb = user_vault.get("company_profile") or user_vault.get("bio_notes", "")
     addressee = prospect_name or "there"
 
     prompt = f"""You are triaging an inbound reply from a prospective client to {user_name}.
@@ -61,21 +63,24 @@ Body: {body}
 Sender Name: {user_name} (Sign off as '{user_first}')
 Portfolio: {portfolio}
 
+Company Knowledge Base (Verified facts, packages, FAQs, and office details):
+{company_kb if company_kb else "No detailed company profile on file."}
+
 Categories:
 1. "IGNORE_AUTO": Out of office, automated vacation notices, delivery failure/bounce.
 2. "OPT_OUT": "Unsubscribe", "Not interested", "Remove me", "Wrong email", "No thanks".
-3. "RESOLVE_SILENTLY": Inquiring about portfolio, past samples, or booking link that are already available.
-4. "ACTION_NEEDED": Pricing questions ('what is your price?'), budget counters ('can you do $200?'), custom requirements, or scope inquiries.
+3. "RESOLVE_SILENTLY": Inquiring about portfolio, past samples, services, packages, FAQs, contact info, or office address that are answered in the Company Knowledge Base.
+4. "ACTION_NEEDED": Pricing negotiation (budget counters), custom requirements, asking for discounts outside standard packages, or scope changes.
 5. "RESULT_ACHIEVED": Explicitly agreed to a meeting time, ready to hire/sign, or confirmed price/deal.
 
 Copywriting Guidelines for "suggested_reply":
 - TONE: Natural, direct, conversational human peer. Sound like an experienced builder or freelancer writing a quick email from a laptop. 2 to 4 sentences maximum.
-- PRICING INQUIRIES: Be transparent, direct, and confident. State a realistic ballpark range (e.g. '$250 to $450 one-time setup depending on menu size and ordering flow—zero monthly software fees'), then offer a zero-pressure 5-minute screen share: 'Would you be open to a quick 5-min walkthrough tomorrow or Thursday to see the live WhatsApp ordering in action?'
-- BUDGET COUNTERS: Be warm and accommodating while maintaining standards.
+- IF RESOLVE_SILENTLY: Answer the client's specific inquiry directly and accurately using facts from the Company Knowledge Base (e.g. quote exact packages, FAQs, or office address). Follow with a warm, low-friction invitation for next steps.
+- PRICING INQUIRIES (if not in KB): Be transparent, direct, and confident. State a realistic ballpark range (e.g. '$250 to $450 one-time setup depending on menu size—zero monthly software fees'), then offer a zero-pressure 5-minute screen share.
 - ABSOLUTELY FORBIDDEN:
   * NO markdown headers (NEVER write '# Ready-to-Send Response', '## Draft', etc.).
   * NO quotes wrapping the text.
-  * NO corporate AI pleasantries ('Thanks so much for reaching out! I appreciate your interest', 'I hope this email finds you well', 'Rather than sending a generic quote', 'customized for your operation').
+  * NO corporate AI pleasantries ('Thanks so much for reaching out! I appreciate your interest', 'I hope this email finds you well', 'Rather than sending a generic quote').
   * NO preambles or labels ('Here is the draft:').
 - SIGNOFF: End cleanly with 'Best,\n{user_first}' or 'Cheers,\n{user_first}'.
 
@@ -87,6 +92,7 @@ Output valid JSON:
   "suggested_reply": "Clean, natural raw email body"
 }}
 """
+
     try:
         raw_res = await bedrock_service.converse(
             prompt=prompt,
@@ -214,6 +220,7 @@ Copywriting Rules:
                     f"----------------------------------------\n"
                     f"{final_email_text}\n"
                     f"----------------------------------------"
+                    f"{build_user_email_footer(user_profile)}"
                 ),
                 client_reply_dispatched=True,
                 client_reply_body=final_email_text,
@@ -258,15 +265,15 @@ Copywriting Rules:
             should_surface_to_user=False,
         )
 
-    # 3. Silent Vault Resolution (e.g. asking for portfolio links already in vault)
-    if cat == "RESOLVE_SILENTLY" and user_profile.get("portfolio"):
-        vault_reply = (
+    # 3. Silent Vault Resolution (Answers routine inquiries directly from Company KB)
+    if cat == "RESOLVE_SILENTLY":
+        raw_vault_reply = classification.get("suggested_reply") or (
             f"Hi {prospect_greeting},\n\n"
-            f"Here are samples of our recent work and live setups: {user_profile.get('portfolio')}.\n\n"
+            f"Here are details and samples of our recent work: {user_profile.get('portfolio', 'https://anasriaz.com')}.\n\n"
             f"Would you be open to a quick 5-minute screen share to see how this works for your business?\n\n"
             f"Best,\n{user_first_name}"
         )
-        vault_reply = sanitize_email_copy(vault_reply, user_name=user_name)
+        vault_reply = sanitize_email_copy(raw_vault_reply, user_name=user_name)
         email_service.send_email(
             to_email=from_addr,
             subject=f"Re: {sanitize_subject_line(input_data.subject)}",
@@ -303,6 +310,7 @@ Copywriting Rules:
             f"----------------------------------------\n\n"
             f"👉 How would you like to respond?\n"
             f"Reply 'Approve' to send as-is, or reply with your rough adjustments (e.g. 'Counter with $200 and ask for their menu')."
+            f"{build_user_email_footer(user_profile)}"
         )
         return InboundTriageResult(
             intent_category="ACTION_NEEDED",
@@ -320,6 +328,7 @@ Copywriting Rules:
         f"Summary: {classification.get('summary')}\n"
         f"Booking Link sent: {user_profile.get('booking_link', 'cal.com')}\n\n"
         f"Mission marked as COMPLETED."
+        f"{build_user_email_footer(user_profile)}"
     )
     if mission:
         mission["status"] = "RESULT_ACHIEVED"

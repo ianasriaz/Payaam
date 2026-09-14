@@ -13,7 +13,11 @@ from strands.models import BedrockModel
 from src.config import settings
 from src.services.dynamodb import dynamodb_service
 from src.services.email_service import InboundEmail, email_service
-from src.agent.copywriting import clean_user_name, extract_first_name
+from src.agent.copywriting import (
+    build_user_email_footer,
+    clean_user_name,
+    extract_first_name,
+)
 from src.agent.tools.onboarding import (
     handle_onboarding_or_greeting_tool,
     OnboardingInput,
@@ -101,12 +105,13 @@ class PayaamAgent:
         # ---------------------------------------------------------------------
         body_upper = body.upper()
         if "DELETE MY DATA" in body_upper or "CONNECT_SMTP" in body_upper:
-            onboarding_res = handle_onboarding_or_greeting_tool(
+            onboarding_res = await handle_onboarding_or_greeting_tool(
                 OnboardingInput(
                     user_email=sender,
                     user_name=email_data.from_name,
                     email_subject=subject,
                     email_body=body,
+                    attachments=email_data.attachments,
                 )
             )
             if onboarding_res.action_type != "PASSTHROUGH":
@@ -126,7 +131,13 @@ class PayaamAgent:
         # ---------------------------------------------------------------------
         # Step 2: Check If Correlated with an Active Mission (Two-Knock Policy)
         # ---------------------------------------------------------------------
-        correlated_mission = dynamodb_service.find_mission_by_thread(thread_ref or "", sender_email=sender)
+        is_reply = subject.strip().lower().startswith("re:") or bool(email_data.in_reply_to) or bool(email_data.references)
+        correlated_mission = None
+        if thread_ref:
+            correlated_mission = dynamodb_service.find_mission_by_thread(thread_ref)
+        elif is_reply:
+            correlated_mission = dynamodb_service.find_mission_by_thread("", sender_email=sender)
+
         if correlated_mission:
             self.logger.info(f"Correlated email with active mission {correlated_mission.get('mission_id')}")
             triage_res = await triage_inbound_email_tool(
@@ -159,12 +170,13 @@ class PayaamAgent:
         # ---------------------------------------------------------------------
         # Step 3: Check Onboarding / Greeting / Profile Setup (Unthreaded)
         # ---------------------------------------------------------------------
-        onboarding_res = handle_onboarding_or_greeting_tool(
+        onboarding_res = await handle_onboarding_or_greeting_tool(
             OnboardingInput(
                 user_email=sender,
                 user_name=email_data.from_name,
                 email_subject=subject,
                 email_body=body,
+                attachments=email_data.attachments,
             )
         )
 
@@ -197,6 +209,9 @@ class PayaamAgent:
         # Send launch receipt back to the user
         user_name = clean_user_name(email_data.from_name, sender)
         user_first = extract_first_name(user_name)
+        user_profile = dynamodb_service.get_user(sender) or {"name": user_name, "email": sender}
+        footer = build_user_email_footer(user_profile)
+
         email_service.send_email(
             to_email=sender,
             subject=f"🚀 Payaam Mission Launched: {dispatch_res.mission_id}",
@@ -207,6 +222,7 @@ class PayaamAgent:
                 f"I will handle auto-responders, follow-ups, and routine questions automatically, "
                 f"and will only surface to your inbox when a decision or confirmed meeting is ready!\n\n"
                 f"Mission ID: {dispatch_res.mission_id}"
+                f"{footer}"
             ),
             in_reply_to=email_data.message_id,
         )
@@ -217,6 +233,7 @@ class PayaamAgent:
             "dispatched_count": dispatch_res.dispatched_count,
             "collisions": len(dispatch_res.collisions_detected),
         }
+
 
 
 payaam_agent = PayaamAgent()

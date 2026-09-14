@@ -18,8 +18,9 @@ from src.agent.tools.inbox_triager import (
 from src.services.dynamodb import dynamodb_service
 
 
-def test_onboarding_greeting_detection():
-    res = handle_onboarding_or_greeting_tool(
+@pytest.mark.asyncio
+async def test_onboarding_greeting_detection():
+    res = await handle_onboarding_or_greeting_tool(
         OnboardingInput(
             user_email="newuser@example.com",
             user_name="New User",
@@ -30,10 +31,12 @@ def test_onboarding_greeting_detection():
     assert res.action_type == "GREETING"
     assert "Welcome to Payaam" in res.response_subject
     assert "DELETE MY DATA" in res.response_body
+    assert "CONNECT_SMTP" in res.response_body
 
 
-def test_onboarding_profile_setup():
-    res = handle_onboarding_or_greeting_tool(
+@pytest.mark.asyncio
+async def test_onboarding_profile_setup():
+    res = await handle_onboarding_or_greeting_tool(
         OnboardingInput(
             user_email="designer@example.com",
             user_name="Jane Designer",
@@ -45,14 +48,16 @@ def test_onboarding_profile_setup():
     assert res.user_profile is not None
     assert res.user_profile["portfolio"] == "https://jane.design"
     assert any(p in res.user_profile["deletion_pin"] for p in ["PYM-", "WD-"])
+    assert "Payaam User Privacy & Email Controls" in res.response_body
 
 
-def test_onboarding_data_deletion_with_pin():
+@pytest.mark.asyncio
+async def test_onboarding_data_deletion_with_pin():
     email = "delete_me@example.com"
     user = dynamodb_service.save_user({"email": email, "name": "Temporary User"})
     pin = user["deletion_pin"]
 
-    res = handle_onboarding_or_greeting_tool(
+    res = await handle_onboarding_or_greeting_tool(
         OnboardingInput(
             user_email=email,
             email_subject="Delete my data",
@@ -61,6 +66,7 @@ def test_onboarding_data_deletion_with_pin():
     )
     assert res.action_type == "DATA_DELETED"
     assert dynamodb_service.get_user(email) is None
+
 
 
 def test_extract_leads_from_text():
@@ -192,4 +198,47 @@ def test_clean_user_name_and_greeting_resolution():
     assert extract_prospect_greeting_name("Roast & Bean") == "there" or "Roast" in extract_prospect_greeting_name("Roast & Bean")
     assert extract_prospect_greeting_name("Sarah Jenkins (Head of Eng)") == "Sarah"
     assert extract_prospect_greeting_name(None, "owp360@gmail.com") == "there"
+
+
+@pytest.mark.asyncio
+async def test_company_profile_attachment_ingestion_and_user_footer():
+    from src.services.email_service import EmailAttachment
+    from src.agent.copywriting import build_user_email_footer
+
+    doc_text = b"Company: Apex Digital\nServices: Web & AI\nPackages: $500 Starter, $1500 Pro\nOffice: 450 Lexington Ave, NY\nFAQ: Support is 24/7."
+    att = EmailAttachment(
+        filename="company_profile.txt",
+        content_type="text/plain",
+        data_bytes=doc_text,
+    )
+
+    res = await handle_onboarding_or_greeting_tool(
+        OnboardingInput(
+            user_email="apex_founder@company.com",
+            user_name="Apex Founder",
+            email_subject="Our Company Profile Attachment",
+            email_body="Attached is our company overview and services.",
+            attachments=[att],
+        )
+    )
+
+    assert res.action_type == "PROFILE_SAVED"
+    assert res.user_profile is not None
+    assert "Company Knowledge Base" in res.response_subject or "Profile" in res.response_subject
+    assert "DELETE MY DATA" in res.response_body
+    assert "Payaam User Privacy & Email Controls" in res.response_body
+    assert res.user_profile.get("company_profile") is not None
+
+    # Test footer with and without custom SMTP
+    footer_no_smtp = build_user_email_footer({"deletion_pin": "PYM-1234"})
+    assert "agent@anasriaz.com" in footer_no_smtp
+    assert "DELETE MY DATA PYM-1234" in footer_no_smtp
+
+    footer_with_smtp = build_user_email_footer({
+        "deletion_pin": "PYM-5678",
+        "smtp_config": {"username": "ceo@apex.com"}
+    })
+    assert "ceo@apex.com" in footer_with_smtp
+    assert "DELETE MY DATA PYM-5678" in footer_with_smtp
+
 
